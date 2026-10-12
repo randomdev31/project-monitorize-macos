@@ -6,6 +6,15 @@ from monitorize.platform.utils import detect_desktop_environment
 
 
 class DesktopDetectionTest(unittest.TestCase):
+    def test_niri_desktop_identifiers_and_socket(self):
+        for variable in ("XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION"):
+            with self.subTest(variable=variable), patch.dict(os.environ, {variable: "Niri"}, clear=True):
+                self.assertEqual(detect_desktop_environment(), "niri")
+        with patch.dict(os.environ, {"NIRI_SOCKET": "/run/user/1000/niri.sock"}, clear=True):
+            self.assertEqual(detect_desktop_environment(), "niri")
+        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "KDE", "NIRI_SOCKET": "stale"}, clear=True):
+            self.assertEqual(detect_desktop_environment(), "kde")
+
     def test_cosmic_desktop_identifiers_are_case_insensitive(self):
         for value in ("COSMIC", "cosmic", "Cosmic"):
             for variable in ("XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION"):

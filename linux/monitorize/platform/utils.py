@@ -15,7 +15,7 @@ QML_DIR = os.path.join(PACKAGE_DIR, "qml")
 
 def detect_desktop_environment() -> str:
     """
-    Return "cosmic", "cinnamon", "kde", "gnome", "hyprland", "sway", or ""
+    Return "cosmic", "cinnamon", "kde", "gnome", "hyprland", "sway", "niri", or ""
     (unknown) based on environment variables. Checks XDG_CURRENT_DESKTOP,
     XDG_SESSION_DESKTOP, DESKTOP_SESSION,
     and compositor-specific variables; case-insensitive.
@@ -32,6 +32,8 @@ def detect_desktop_environment() -> str:
         return "hyprland"
     if sway or "sway" in combined:
         return "sway"
+    if "niri" in combined:
+        return "niri"
     if "cosmic" in xdg:
         return "cosmic"
     if "cinnamon" in combined:
@@ -42,9 +44,11 @@ def detect_desktop_environment() -> str:
         return "gnome"
     if "cosmic" in combined:
         return "cosmic"
-    for name in ("hyprland", "sway", "cinnamon", "cosmic", "kde", "gnome"):
+    for name in ("hyprland", "sway", "niri", "cinnamon", "cosmic", "kde", "gnome"):
         if name in session_desktop:
             return name
+    if os.environ.get("NIRI_SOCKET"):
+        return "niri"
     return ""
 
 
