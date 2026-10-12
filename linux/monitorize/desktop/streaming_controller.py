@@ -87,6 +87,7 @@ def _sunshine_capture_method(
     pipewire_node=None,
     portal_source_type="",
     flatpak=None,
+    vkms=False,
 ):
     """Choose an explicit backend for the active desktop session."""
     if portal_source_type:
@@ -108,6 +109,8 @@ def _sunshine_capture_method(
         return "portal"
 
     normalized = str(desktop or "").strip().lower()
+    if normalized == "niri" and vkms:
+        return "kms"
     if normalized == "cinnamon" and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
         return "kms"
     if normalized == "cosmic" and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
@@ -515,6 +518,7 @@ class StreamingController(QObject):
             pipewire_node=pipewire_node,
             offset_x=int(event.get("offset_x") or 0),
             offset_y=int(event.get("offset_y") or 0),
+            vkms=bool(event.get("vkms")),
         ):
             if instance == 1:
                 QTimer.singleShot(0, self.stop)
@@ -561,6 +565,7 @@ class StreamingController(QObject):
         offset_x=0,
         offset_y=0,
         portal_source_type="",
+        vkms=False,
     ):
         encoder = self.encoder if instance == 1 else self.third_encoder
         gpu_id = self.gpu_id if instance == 1 else self.third_gpu_id
@@ -615,6 +620,7 @@ class StreamingController(QObject):
             self.de,
             pipewire_node=pipewire_node,
             portal_source_type=portal_source_type,
+            vkms=vkms,
         )
         requested = self.capture if instance == 1 else self.third_capture
         if requested != "auto":
