@@ -146,27 +146,59 @@ class SunshineControllerTest(unittest.TestCase):
         with patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}):
             self.assertEqual(_sunshine_capture_method("niri", vkms=True, flatpak=False), "x11")
 
-    def test_niri_vkms_auto_and_manual_capture_for_both_instances(self):
-        for requested, expected in (("auto", "kms"), ("portal", "portal")):
-            for slot, instance in (("primary", 1), ("secondary", 2)):
-                with self.subTest(requested=requested, instance=instance):
-                    controller = self.controller("niri")
-                    controller.streaming = True
-                    controller.capture = controller.third_capture = requested
-                    with (
-                        patch("monitorize.desktop.streaming_controller.get_sunshine_kms_setup_error", return_value=""),
-                        patch("monitorize.desktop.streaming_controller.is_sunshine_settings_instance", return_value=False),
-                        patch("monitorize.desktop.streaming_controller.sync_sunshine_stream_config", return_value=(True, "synced")) as sync,
-                        patch("monitorize.desktop.streaming_controller.save_sunshine_config", return_value=(True, "saved")),
-                        patch("monitorize.desktop.streaming_controller.start_sunshine", return_value=(True, "started")),
-                    ):
-                        controller._display_ready(slot, {
-                            "type": "headless_ready", "name": f"Virtual-{instance}", "vkms": True,
-                            "width": 2340, "height": 1080, "fps": 60,
-                        })
-                    self.assertEqual(sync.call_args.kwargs["capture"], expected)
-                    self.assertEqual(sync.call_args.kwargs["instance"], instance)
+    def test_vkms_capture_preserves_compositor_and_package_routes(self):
+        for desktop in ("gnome", "hyprland", "sway"):
+            with self.subTest(desktop=desktop):
+                self.assertEqual(_sunshine_capture_method(desktop, vkms=True, flatpak=False), "kms")
+                self.assertEqual(_sunshine_capture_method(desktop, vkms=True, pipewire_node=42, flatpak=False), "kms")
+                self.assertEqual(_sunshine_capture_method(desktop, vkms=True, flatpak=True), "portal")
+                self.assertEqual(_sunshine_capture_method(desktop, vkms=True, pipewire_node=42, flatpak=True), "pipewire_node")
+                with patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}):
+                    self.assertEqual(_sunshine_capture_method(desktop, vkms=True, flatpak=False), "x11")
+        self.assertEqual(_sunshine_capture_method("kde", vkms=True, flatpak=False), "kwin")
 
+    def test_gnome_vkms_holder_receives_each_cards_capture_choice(self):
+        controller = self.controller("gnome")
+        controller.virtual_display_creator = "vkms"
+        controller.capture = "auto"
+        controller.third_capture = "pipewire_node"
+        with patch("monitorize.desktop.streaming_controller.QProcess") as process, patch(
+            "monitorize.desktop.streaming_controller.os.path.isfile", return_value=False
+        ), patch.object(controller, "_connect_gnome_display_config_signal"):
+            controller._start_display_process("primary", 1920, 1080, 60, 1)
+            env = process.return_value.setProcessEnvironment.call_args.args[0]
+            self.assertEqual(env.value("MONITORIZE_VKMS_CAPTURE"), "kms")
+            controller._start_display_process("additional", 1920, 1080, 60, 1)
+            env = process.return_value.setProcessEnvironment.call_args.args[0]
+            self.assertEqual(env.value("MONITORIZE_VKMS_CAPTURE"), "pipewire_node")
+        with patch("monitorize.desktop.streaming_controller.QProcess") as process, patch(
+            "monitorize.desktop.streaming_controller.os.path.isfile", return_value=True
+        ), patch.object(controller, "_connect_gnome_display_config_signal"):
+            controller._start_display_process("primary", 1920, 1080, 60, 1)
+            env = process.return_value.setProcessEnvironment.call_args.args[0]
+            self.assertEqual(env.value("MONITORIZE_VKMS_CAPTURE"), "pipewire_node")
+
+    def test_vkms_auto_and_manual_capture_for_both_instances(self):
+        for desktop in ("gnome", "hyprland", "sway", "niri"):
+            for requested, expected in (("auto", "kms"), ("portal", "portal")):
+                for slot, instance in (("primary", 1), ("secondary", 2)):
+                    with self.subTest(requested=requested, instance=instance):
+                        controller = self.controller(desktop)
+                        controller.streaming = True
+                        controller.capture = controller.third_capture = requested
+                        with (
+                            patch("monitorize.desktop.streaming_controller.get_sunshine_kms_setup_error", return_value=""),
+                            patch("monitorize.desktop.streaming_controller.is_sunshine_settings_instance", return_value=False),
+                            patch("monitorize.desktop.streaming_controller.sync_sunshine_stream_config", return_value=(True, "synced")) as sync,
+                            patch("monitorize.desktop.streaming_controller.save_sunshine_config", return_value=(True, "saved")),
+                            patch("monitorize.desktop.streaming_controller.start_sunshine", return_value=(True, "started")),
+                        ):
+                            controller._display_ready(slot, {
+                                "type": "headless_ready", "name": f"Virtual-{instance}", "vkms": True,
+                                "width": 2340, "height": 1080, "fps": 60,
+                            })
+                        self.assertEqual(sync.call_args.kwargs["capture"], expected)
+                        self.assertEqual(sync.call_args.kwargs["instance"], instance)
     def test_niri_vkms_auto_reports_missing_kms_permissions(self):
         controller = self.controller("niri")
         message = "KMS capture requires cap_sys_admin on Monitorize's Sunshine binary."
@@ -481,9 +513,10 @@ Virtual-1-2 connected
     @patch("monitorize.desktop.streaming_controller.start_sunshine", return_value=(True, "started"))
     @patch("monitorize.desktop.streaming_controller.is_sunshine_running", return_value=False)
     @patch("monitorize.desktop.streaming_controller.save_sunshine_config", return_value=(True, "saved"))
+    @patch("monitorize.desktop.streaming_controller.get_sunshine_kms_setup_error", return_value="")
     @patch("monitorize.desktop.streaming_controller.sync_sunshine_stream_config", return_value=(True, "synced"))
-    def test_gnome_vkms_event_uses_existing_monitor_pipewire_stream(
-        self, sync, _save, _running, start, _stop
+    def test_gnome_vkms_event_uses_kms_without_pipewire_stream(
+        self, sync, _kms, _save, _running, start, _stop
     ):
         controller = self.controller("gnome")
         controller.streaming = True
@@ -492,7 +525,6 @@ Virtual-1-2 connected
             {
                 "type": "headless_ready",
                 "name": "Virtual-1",
-                "node_id": 42,
                 "vkms": True,
                 "width": 1920,
                 "height": 1080,
@@ -501,10 +533,10 @@ Virtual-1-2 connected
                 "fps": 60,
             },
         )
-        self.assertEqual(sync.call_args.kwargs["capture"], "pipewire_node")
+        self.assertEqual(sync.call_args.kwargs["capture"], "kms")
         start.assert_called_once_with(
             1,
-            pipewire_node=42,
+            pipewire_node=None,
             offset_x=1920,
             offset_y=0,
             width=1920,

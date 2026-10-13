@@ -93,6 +93,15 @@ def _sunshine_capture_method(
     if portal_source_type:
         return "portal"
 
+    normalized = str(desktop or "").strip().lower()
+    if (
+        vkms
+        and normalized in ("gnome", "hyprland", "sway")
+        and os.environ.get("XDG_SESSION_TYPE", "").lower() != "x11"
+        and not (os.path.isfile("/.flatpak-info") if flatpak is None else flatpak)
+    ):
+        return "kms"
+
     try:
         has_pipewire_node = int(pipewire_node) > 0
     except (TypeError, ValueError):
@@ -108,7 +117,6 @@ def _sunshine_capture_method(
     if flatpak:
         return "portal"
 
-    normalized = str(desktop or "").strip().lower()
     if normalized == "niri" and vkms:
         return "kms"
     if normalized == "cinnamon" and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
@@ -378,6 +386,12 @@ class StreamingController(QObject):
     def _start_display_process(self, slot, width, height, fps, generation):
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
+        if self.virtual_display_creator == "vkms":
+            requested = self.capture if slot == "primary" else self.third_capture
+            capture = _sunshine_capture_method(self.de, vkms=True) if requested == "auto" else requested
+            if requested == "auto" and self.de == "gnome" and os.path.isfile("/.flatpak-info"):
+                capture = "pipewire_node"
+            env.insert("MONITORIZE_VKMS_CAPTURE", capture)
         if self.de == "gnome" and slot == "additional" and self.gnome_outputs.get("primary"):
             env.insert("MONITORIZE_GNOME_PRIMARY_OUTPUT", self.gnome_outputs["primary"])
 
@@ -466,8 +480,14 @@ class StreamingController(QObject):
         height = int(event.get("height") or (self.height if instance == 1 else self.third_height))
         fps = float(event.get("fps") or (self.fps if instance == 1 else self.third_fps))
         pipewire_node = None
+        requested = self.capture if instance == 1 else self.third_capture
+        selected_capture = (
+            _sunshine_capture_method(self.de, pipewire_node=event.get("node_id"), vkms=bool(event.get("vkms")))
+            if requested == "auto" else requested
+        )
         if (
-            (self.de == "gnome" or event.get("portal"))
+            (event.get("portal") or
+             (self.de == "gnome" and (not event.get("vkms") or selected_capture == "pipewire_node")))
             and self.streaming_backend != "none"
         ):
             try:
@@ -625,6 +645,8 @@ class StreamingController(QObject):
         requested = self.capture if instance == 1 else self.third_capture
         if requested != "auto":
             capture = requested
+        if capture != "pipewire_node":
+            pipewire_node = None
         cosmic_portal = (
             self.de == "cosmic"
             and os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"

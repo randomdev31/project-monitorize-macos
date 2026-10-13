@@ -67,7 +67,7 @@ class VkmsBackendTest(unittest.TestCase):
 
     def test_gnome_capture_failure_removes_only_its_created_slot(self):
         client = self.client("mon2")
-        with patch("monitorize.platform.gnome_monitor_capture.GnomeMonitorCapture") as capture:
+        with patch.dict("os.environ", {"MONITORIZE_VKMS_CAPTURE": "pipewire_node"}), patch("monitorize.platform.gnome_monitor_capture.GnomeMonitorCapture") as capture:
             capture.return_value.start.side_effect = RuntimeError("No capture stream")
             code, output = self.run_holder(client, "additional", "gnome")
         self.assertEqual(code, 1)
@@ -76,13 +76,30 @@ class VkmsBackendTest(unittest.TestCase):
         client.remove_display.assert_called_once_with("mon2", "g-mon2")
 
     def test_gnome_existing_output_node_is_emitted(self):
-        with patch("monitorize.platform.gnome_monitor_capture.GnomeMonitorCapture") as capture:
+        with patch.dict("os.environ", {"MONITORIZE_VKMS_CAPTURE": "pipewire_node"}), patch("monitorize.platform.gnome_monitor_capture.GnomeMonitorCapture") as capture:
             capture.return_value.start.return_value = {"node_id":42, "offset_x":1920, "offset_y":0}
             code, output = self.run_holder(self.client(), desktop="gnome")
         self.assertEqual(code, 0)
         capture.return_value.start.assert_called_once_with("Virtual-7")
         capture.return_value.close.assert_called_once()
         self.assertIn('"node_id":42', output)
+
+    def test_gnome_kms_emits_offsets_without_opening_pipewire(self):
+        with patch.dict("os.environ", {"MONITORIZE_VKMS_CAPTURE": "kms"}), patch(
+            "monitorize.platform.gnome_monitor_capture.GnomeMonitorCapture"
+        ) as capture, patch(
+            "monitorize.platform.gnome_virtual_monitor.display_config_interface"
+        ) as display_config:
+            display_config.return_value.GetCurrentState.return_value = (
+                1, [], [(1920, 0, 1, 0, False, [("Virtual-7",)], {})], {}
+            )
+            code, output = self.run_holder(self.client(), desktop="gnome")
+        self.assertEqual(code, 0)
+        capture.assert_not_called()
+        event = json.loads(next(line.split(" ", 1)[1] for line in output.splitlines()
+                               if line.startswith("MONITORIZE_EVENT ")))
+        self.assertEqual(event["offset_x"], 1920)
+        self.assertNotIn("node_id", event)
 
     def test_failure_before_create_never_removes(self):
         client = self.client()

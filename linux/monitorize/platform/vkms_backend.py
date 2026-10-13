@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import select
 import signal
 import sys
@@ -146,10 +147,21 @@ def run_vkms_headless(
             "generation": generation[0],
             "card": result["card"],
         }
-        if desktop.lower() == "gnome":
+        if desktop.lower() == "gnome" and os.environ.get(
+            "MONITORIZE_VKMS_CAPTURE", "pipewire_node" if os.path.isfile("/.flatpak-info") else "kms"
+        ) == "pipewire_node":
             from monitorize.platform.gnome_monitor_capture import GnomeMonitorCapture
             capture = GnomeMonitorCapture()
             event.update(capture.start(output_name))
+        elif desktop.lower() == "gnome":
+            from monitorize.platform.gnome_virtual_monitor import display_config_interface
+            state = display_config_interface().GetCurrentState()
+            for logical in state[2]:
+                if output_name in [str(spec[0]) for spec in logical[5]]:
+                    event.update(offset_x=int(logical[0]), offset_y=int(logical[1]))
+                    break
+            else:
+                raise RuntimeError(f"GNOME output {output_name} disappeared before capture was ready")
         if stop_requested[0]:
             return 0 if cleanup() else 1
         print(f"MONITORIZE_EVENT {json.dumps(event, separators=(',', ':'))}", flush=True)
