@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from monitorize.platform.polkit_errors import authentication_error_message
 
 HELPER = Path("/usr/libexec/monitorize/monitorize-system-setup")
 
@@ -71,6 +72,7 @@ def parse_system_setup_result(returncode, stdout, stderr):
     """Apply the same response rules to synchronous and Qt process callers."""
     if returncode != 0:
         detail = stderr.strip() or "Authorization was cancelled or setup failed."
+        detail = authentication_error_message(detail) or detail
         return {"success": False, "message": detail}
 
     try:

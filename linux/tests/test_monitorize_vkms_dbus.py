@@ -7,6 +7,19 @@ from monitorize.platform.monitorize_vkms_dbus import (
 )
 
 class VkmsDbusTest(unittest.TestCase):
+    def test_authentication_failures_are_explained_for_bus_errors_and_json_responses(self):
+        for detail in ("No authentication agent found", "Polkit denied the Monitorize VKMS request."):
+            with self.subTest(detail=detail):
+                self.service.CreateDisplay.side_effect = PermissionError(detail)
+                with self.assertRaises(VkmsCommandError) as error:
+                    self.client.create_display(1920, 1080, 60, display="mon2")
+                self.assertIn("authentication agent", str(error.exception))
+                self.service.CreateDisplay.side_effect = None
+                self.service.CreateDisplay.return_value = json.dumps({"success": False, "message": detail})
+                with self.assertRaises(VkmsCommandError) as error:
+                    self.client.create_display(1920, 1080, 60, display="mon2")
+                self.assertIn("authentication agent", str(error.exception))
+
     def setUp(self):
         self.service = Mock()
         self.client = MonitorizeVkmsClient()

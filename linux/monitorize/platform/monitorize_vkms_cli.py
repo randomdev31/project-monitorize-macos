@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from typing import Any
 
+from monitorize.platform.polkit_errors import authentication_error_message
 log = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 25.0
@@ -85,6 +86,9 @@ def _translate_error_message(error_type: str, raw_message: str) -> str:
     code = error_type.upper()
     lower_type = error_type.lower()
     lower_msg = raw_message.lower()
+    authentication_error = authentication_error_message(raw_message)
+    if authentication_error:
+        return authentication_error
 
     if code == "TOPOLOGY_NOT_READY" or "topology" in lower_msg or "bootstrap" in lower_msg:
         return "Monitorize VKMS is installed but not ready. Reboot once after installation."

@@ -12,6 +12,23 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class SystemSetupTest(unittest.TestCase):
+    def test_missing_agent_error_explains_how_to_restore_the_prompt(self):
+        for detail in (
+            "No authentication agent found.",
+            "Error creating textual authentication agent: Error opening current controlling terminal",
+        ):
+            with self.subTest(detail=detail):
+                result = system_setup.parse_system_setup_result(127, "", detail)
+                self.assertFalse(result["success"])
+                self.assertIn("Could not open", result["message"])
+                self.assertIn("Install and start a Polkit authentication agent", result["message"])
+
+    def test_denial_adds_conditional_agent_hint_but_cancellation_and_other_errors_do_not(self):
+        result = system_setup.parse_system_setup_result(127, "", "Not authorized")
+        self.assertIn("If no password dialog appeared", result["message"])
+        for detail in ("Authorization was cancelled.", "Firewall setup failed."):
+            self.assertEqual(system_setup.parse_system_setup_result(1, "", detail)["message"], detail)
+
     @patch.object(system_setup, "get_system_setup_status", return_value={"available": True, "input_ready": False})
     @patch.object(system_setup.shutil, "which", return_value="/usr/bin/pkexec")
     @patch.object(system_setup.subprocess, "run")

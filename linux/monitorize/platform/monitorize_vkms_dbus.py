@@ -3,6 +3,7 @@
 import json
 import math
 
+from monitorize.platform.polkit_errors import authentication_error_message
 from monitorize.platform.monitorize_vkms_cli import (
     MonitorizeVkmsError, VkmsCliNotFoundError, VkmsCommandError,
     VkmsProtocolError, _translate_error_message,
@@ -45,7 +46,8 @@ class MonitorizeVkmsClient:
         if not isinstance(data, dict) or type(data.get("success")) is not bool:
             raise VkmsProtocolError("The host VKMS service returned an invalid response.")
         if not data["success"] and not partial:
-            raise VkmsCommandError(str(data.get("message") or "Host VKMS operation failed."),
+            message = str(data.get("message") or "Host VKMS operation failed.")
+            raise VkmsCommandError(authentication_error_message(message) or message,
                                    raw_response=data)
         return data
 
