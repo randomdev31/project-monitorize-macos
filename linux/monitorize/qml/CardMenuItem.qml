@@ -12,7 +12,7 @@ MenuItem {
         leftPadding: 12
     }
     background: Rectangle {
-        radius: 6
+        radius: theme.controlRadius
         color: control.highlighted ? theme.surfaceAlt : "transparent"
     }
 }

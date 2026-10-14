@@ -25,7 +25,7 @@ Rectangle {
 
     Layout.fillWidth: true
     implicitHeight: content.implicitHeight + 32
-    radius: 14
+    radius: theme.cardRadius
     color: theme.surface
     border.color: theme.border
 

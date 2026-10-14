@@ -169,7 +169,7 @@ Rectangle {
             width: navigationColumn.width
             y: root.navigationButtonY(root.highlightedPage)
             height: root.navigationButtonHeight(root.highlightedPage)
-            radius: 10
+            radius: theme.controlRadius
             color: theme.buttonBackground
             z: 0
 
@@ -237,7 +237,7 @@ Rectangle {
         closePolicy: Popup.NoAutoClose
         background: Rectangle {
             color: "#b91c1c"
-            radius: 8
+            radius: theme.controlRadius
         }
         contentItem: Text {
             text: root.startFailureMessage
@@ -320,7 +320,7 @@ Rectangle {
         closePolicy: Popup.NoAutoClose
         background: Rectangle {
             color: root.stagnantCleanupSucceeded ? "#15803d" : "#b91c1c"
-            radius: 8
+            radius: theme.controlRadius
         }
         contentItem: Text {
             text: root.stagnantCleanupMessage
@@ -350,7 +350,7 @@ Rectangle {
         closePolicy: Popup.NoAutoClose
         background: Rectangle {
             color: root.restoreTokenClearSucceeded ? "#15803d" : "#b91c1c"
-            radius: 8
+            radius: theme.controlRadius
         }
         contentItem: Text {
             text: root.restoreTokenClearMessage
@@ -475,7 +475,7 @@ Rectangle {
             implicitHeight: 34
             color: parent.down ? theme.surfaceAlt : (parent.hovered ? theme.borderHover : theme.surface)
             border.color: theme.border
-            radius: 8
+            radius: theme.controlRadius
             Behavior on color { ColorAnimation { duration: 150 } }
         }
         contentItem: Text {

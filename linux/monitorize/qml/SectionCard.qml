@@ -9,7 +9,7 @@ Rectangle {
     property bool expanded: true
     default property alias content: body.data
     implicitHeight: contents.implicitHeight + 32
-    radius: 14
+    radius: theme.cardRadius
     color: theme.surface
     opacity: enabled ? 1.0 : 0.4
     border.color: theme.border

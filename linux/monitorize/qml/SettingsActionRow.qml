@@ -22,7 +22,7 @@ Rectangle {
         Rectangle {
             Layout.preferredWidth: 48; Layout.preferredHeight: 48
             Layout.alignment: Qt.AlignVCenter
-            radius: 10
+            radius: theme.controlRadius
             color: theme.surfaceAlt
             LineIcon {
                 anchors.centerIn: parent

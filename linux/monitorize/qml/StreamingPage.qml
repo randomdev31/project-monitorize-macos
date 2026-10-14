@@ -102,7 +102,7 @@ Item {
                 spacing: 16
                 Rectangle {
                     Layout.preferredWidth: 48; Layout.preferredHeight: 48
-                    radius: 10; color: theme.surfaceAlt
+                    radius: theme.controlRadius; color: theme.surfaceAlt
                     LineIcon {
                         symbol: "display"
                         anchors.centerIn: parent
@@ -130,7 +130,7 @@ Item {
                 visible: backend.sessionMode === "Mirror"
                 Layout.fillWidth: true
                 implicitHeight: summary.implicitHeight + 40
-                radius: 14; color: theme.surface; border.color: theme.border
+                radius: theme.cardRadius; color: theme.surface; border.color: theme.border
                 RowLayout {
                     id: summary
                     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 20 }
@@ -167,7 +167,7 @@ Item {
                     required property int index
                     Layout.fillWidth: true
                     implicitHeight: Math.max(88, statusColumn.implicitHeight + 36)
-                    radius: 14; color: theme.surface; border.color: theme.border
+                    radius: theme.cardRadius; color: theme.surface; border.color: theme.border
                     Item {
                         anchors.fill: parent; anchors.margins: 18
                         LineIcon {
@@ -227,7 +227,7 @@ Item {
                             Menu {
                                 id: displayMenu
                                 width: 220
-                                background: Rectangle { color: theme.surface; border.color: theme.border; radius: 8 }
+                                background: Rectangle { color: theme.surface; border.color: theme.border; radius: theme.controlRadius }
                                 CardMenuItem { text: "Sunshine settings"; enabled: backend.sunshineAvailable && !backend.sunshineSettingsOpening; onTriggered: backend.openSunshineWebUi(displayCard.modelData.number) }
                                 CardMenuItem {
                                     visible: displayCard.modelData.number === 2
@@ -302,7 +302,7 @@ Item {
                             textFormat: TextEdit.PlainText
                             readOnly: true; wrapMode: TextEdit.Wrap
                             color: theme.textSecondary; font.family: "monospace"; font.pixelSize: 11
-                            background: Rectangle { color: theme.logBoxBackground; radius: 8 }
+                            background: Rectangle { color: theme.logBoxBackground; radius: theme.controlRadius }
                         }
                     }
                     Button {

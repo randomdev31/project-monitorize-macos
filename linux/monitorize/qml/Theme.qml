@@ -36,7 +36,7 @@ QtObject {
     readonly property color cardTextSecondary: "#c7d0d9"
     readonly property color cardTextMuted: "#8f9aa6"
 
-    // Shape
-    readonly property int controlRadius: 8
-    readonly property int cardRadius: 10
+    // Shape: KDE Breeze frame corners, in logical pixels.
+    readonly property int controlRadius: 5
+    readonly property int cardRadius: controlRadius
 }

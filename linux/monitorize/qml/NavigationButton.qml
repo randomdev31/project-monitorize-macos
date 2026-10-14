@@ -9,7 +9,7 @@ AbstractButton {
     property bool selected: false
     implicitHeight: 88
     background: Rectangle {
-        radius: 10
+        radius: theme.controlRadius
         color: control.hovered && !control.selected ? theme.surfaceAlt : "transparent"
     }
     contentItem: ColumnLayout {
