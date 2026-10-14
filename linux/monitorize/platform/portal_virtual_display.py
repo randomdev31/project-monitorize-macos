@@ -57,6 +57,8 @@ def run_portal_virtual_display(slot, width, height, fps):
                 negotiator.kill()
                 negotiator.wait()
         negotiator.stdout.close()
+        if negotiator.stderr is not None:
+            negotiator.stderr.close()
         negotiator = None
 
     def request(method, *args, **options):
@@ -187,7 +189,8 @@ def run_portal_virtual_display(slot, width, height, fps):
                     str(int(node)), str(int(width)), str(int(height)),
                     str(min(int(fps), 60)),
                     str(metadata.get("pipewire-serial", "")),
-                ], pass_fds=(resize_fd,), stdout=subprocess.PIPE, text=True)
+                ], pass_fds=(resize_fd,), stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True)
             finally:
                 os.close(resize_fd)
             deadline = time.monotonic() + 20
@@ -207,13 +210,18 @@ def run_portal_virtual_display(slot, width, height, fps):
             if confirmed:
                 actual_width, actual_height = requested_size
             else:
+                error_detail = ""
+                if negotiator.poll() is not None and negotiator.stderr is not None:
+                    error_detail = negotiator.stderr.read().strip()
                 close_negotiator()
-                print(
-                    "[Headless] KWin kept the portal virtual display at "
-                    f"{actual_width}x{actual_height}; requested {width}x{height} "
-                    "requires Plasma 6.8+. Continuing with the compositor-provided "
-                    "size.",
-                    flush=True,
+                reason = (
+                    f" PipeWire reported: {error_detail}"
+                    if error_detail else
+                    " KWin 6.8 or newer is required for this portal resize."
+                )
+                raise RuntimeError(
+                    f"KDE did not apply the requested virtual display size "
+                    f"{width}x{height}.{reason}"
                 )
         else:
             print(
