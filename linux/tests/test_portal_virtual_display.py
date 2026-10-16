@@ -56,6 +56,7 @@ class PortalVirtualDisplayTest(unittest.TestCase):
         negotiator = Mock()
         negotiator.poll.return_value = negotiator_exit
         negotiator.stdout.readline.return_value = negotiated
+        negotiator.stderr.read.return_value = ""
         physical = {"id": 1, "name": "eDP-1"}
         portal_output = {
             "id": 8,
@@ -140,16 +141,16 @@ class PortalVirtualDisplayTest(unittest.TestCase):
         emit.assert_not_called()
         portal.OpenPipeWireRemote.assert_not_called()
 
-    def test_failed_resize_uses_valid_portal_size(self):
+    def test_failed_resize_does_not_report_ready_and_cleans_up(self):
         result, emit, _, session, close, _, negotiator = self.run_portal(
             negotiated="", negotiator_exit=1
         )
-        self.assertEqual(result, 0)
-        event = emit.call_args.args[0]
-        self.assertEqual((event["width"], event["height"]), (1920, 1080))
+        self.assertEqual(result, 1)
+        emit.assert_not_called()
         session.Close.assert_called_once()
         self.assertEqual([call.args[0] for call in close.call_args_list], [100, 99])
         negotiator.stdout.close.assert_called_once()
+        negotiator.stderr.close.assert_called_once()
 
     def test_matching_fixed_portal_size_skips_resize_negotiator(self):
         result, emit, _, session, close, _, negotiator = self.run_portal(
