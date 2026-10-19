@@ -37,7 +37,7 @@ This table shows whether each desktop environment supports via compositor-native
 | --- | :---: | :---: |
 | KDE Plasma 6.7+ | ✅ | ✅ |
 | GNOME 50+| ✅ | ✅ |
-| Hyprland | ✅ | ❌ |
+| Hyprland | ✅ | ✅ |
 | Niri | ❌ | ✅ |
 | Cinnamon X11 | ❌ | ✅ |
 
