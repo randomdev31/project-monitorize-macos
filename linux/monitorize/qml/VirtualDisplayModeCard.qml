@@ -112,7 +112,7 @@ Rectangle {
             LineIcon { symbol: "display"; Layout.preferredWidth: 22; Layout.preferredHeight: 22 }
             Text {
                 text: "Virtual Display " + card.displayNumber
-                color: "#b1d6ff"; font.pixelSize: 14; font.weight: Font.DemiBold
+                color: theme.headingText; font.pixelSize: 14; font.weight: Font.DemiBold
                 Layout.fillWidth: true
             }
             AbstractButton {
@@ -121,15 +121,17 @@ Rectangle {
                 implicitWidth: 36
                 implicitHeight: 36
                 Accessible.name: "Remove Virtual Display " + card.displayNumber
-                ToolTip.visible: hovered
-                ToolTip.text: Accessible.name
                 background: Rectangle {
                     radius: theme.controlRadius
-                    color: removeButton.hovered ? "#74303d" : "transparent"
+                    color: "transparent"
+                    border.width: removeButton.visualFocus ? 1 : 0
+                    border.color: theme.borderHover
                 }
                 LineIcon {
                     symbol: "trash"
-                    tint: removeButton.hovered ? "#ffffff" : "#ff777f"
+                    tint: theme.dark
+                        ? (removeButton.hovered ? "#ff9da3" : "#ff777f")
+                        : (removeButton.hovered ? "#d43b44" : "#b4232d")
                     anchors.centerIn: parent
                     width: 22
                     height: 22
@@ -152,7 +154,7 @@ Rectangle {
                 id: clientInfo
                 text: "?"
                 Accessible.name: "About client display settings"
-                property string helpText: "Create the display when a client connects.\nChecked: use client display settings. Unchecked: use Monitorize’s resolution and refresh rate."
+                property string helpText: "Use the resolution and FPS requested by the client (Moonlight / Artemis)."
                 ToolTip.visible: hovered
                 ToolTip.text: helpText
                 onClicked: clientHelp.open()
@@ -190,6 +192,7 @@ Rectangle {
                 Layout.fillWidth: true
                 model: card.resolutionOptions
                 enabled: !card.clientRequested
+                opacity: enabled ? 1 : 0.45
                 displayText: card.clientRequested ? "Requested by client"
                     : (currentIndex < 0 ? "Select an available mode" : currentText)
                 onActivated: {

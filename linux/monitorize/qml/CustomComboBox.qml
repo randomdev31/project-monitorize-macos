@@ -10,7 +10,7 @@ ComboBox {
         enabled: index !== cb.disabledIndex
         contentItem: Text {
             text: modelData
-            color: index === cb.disabledIndex ? theme.textMuted : ((highlighted || index === cb.accentedIndex) ? "#ffffff" : theme.cardTextPrimary)
+            color: index === cb.disabledIndex ? theme.textMuted : ((highlighted || index === cb.accentedIndex) ? theme.headingText : theme.cardTextPrimary)
             font.pixelSize: 13
             font.weight: Font.DemiBold
             verticalAlignment: Text.AlignVCenter
@@ -43,6 +43,13 @@ ComboBox {
         color: theme.textPrimary
         font.pixelSize: 20
         font.weight: Font.DemiBold
+    }
+
+    popup.background: Rectangle {
+        color: theme.surface
+        border.color: theme.border
+        border.width: 1
+        radius: theme.controlRadius
     }
 
     function selectValue(val, exactMatchOnly=false) {

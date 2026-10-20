@@ -40,6 +40,24 @@ with tempfile.TemporaryDirectory() as d:
                 value=e.evaluate();assert not e.hasError(),e.error().toString();return value
             settle();evaluate('navigate("SettingsPage.qml")');settle();settle()
             assert view.status()==QQuickWidget.Status.Ready
+            # Accent selection is opt-in, live, and independent of light/dark.
+            import monitorize.config.settings as appearance_settings
+            from PyQt6.QtGui import QColor
+            with patch.object(appearance_settings,'CONFIG_DIR',d), patch.object(appearance_settings,'CONFIG_FILE',str(__import__('pathlib').Path(d)/'theme.ini')), patch('monitorize.desktop.backend.load_general_settings',side_effect=appearance_settings.load_general_settings), patch.object(backend._accent_source,'refresh'):
+                appearance=view.rootObject().findChild(QObject,'appearanceTheme')
+                assert appearance
+                assert not backend.useSystemAccent
+                backend._accent_source.color=QColor('#bb2244')
+                backend.setUseSystemAccent(True);settle()
+                assert backend.useSystemAccent
+                assert appearance.property('buttonBackground').name()=='#bb2244'
+                backend.setThemeMode('light');settle()
+                assert appearance.property('buttonBackground').name()=='#bb2244'
+                backend._accent_source.color=QColor('#228844')
+                backend._accent_source.changed.emit();settle()
+                assert appearance.property('buttonBackground').name()=='#228844'
+                backend.setUseSystemAccent(False);settle()
+                assert appearance.property('buttonBackground').name()=='#1676d2'
             page=view.rootObject().findChild(QObject,'startupSettingsPage');assert page
             def prop(code):
                 e=QQmlExpression(view.rootContext(),page,code);value=e.evaluate();assert not e.hasError(),e.error().toString();return value[0]

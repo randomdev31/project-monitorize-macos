@@ -23,7 +23,7 @@ CheckBox {
         Text {
             anchors.centerIn: parent
             text: "✓"
-            color: "#ffffff"
+            color: theme.buttonText
             font.pixelSize: 11
             font.weight: Font.Bold
             visible: chk.checked

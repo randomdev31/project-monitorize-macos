@@ -84,6 +84,9 @@ Rectangle {
 
     Theme {
         id: theme
+        mode: backend ? backend.themeMode : "system"
+        useSystemAccent: backend ? backend.useSystemAccent : false
+        systemAccentColors: backend ? backend.systemAccentColors : ({})
     }
 
     color: theme.background
@@ -166,7 +169,7 @@ Rectangle {
         id: sidebar
         width: 106
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-        color: "#101e30"; border.color: theme.border
+        color: theme.logBoxBackground; border.color: theme.border
 
         Rectangle {
             id: navHighlight

@@ -3,7 +3,11 @@ import QtQuick
 Canvas {
     id: icon
     property string symbol: "display"
-    property color tint: "#a6caff"
+    property color cutoutColor: theme.surfaceAlt
+    property color fillColor: theme.surface
+    onCutoutColorChanged: requestPaint()
+    onFillColorChanged: requestPaint()
+    property color tint: theme.iconTint
     implicitWidth: 24
     implicitHeight: 24
     onSymbolChanged: requestPaint()
@@ -61,7 +65,7 @@ Canvas {
             c.stroke(); c.beginPath()
             c.arc(19, 18, 4.5, 0, Math.PI * 2)
             c.fillStyle = tint; c.fill()
-            c.beginPath(); c.strokeStyle = "#1b2c40"
+            c.beginPath(); c.strokeStyle = cutoutColor
             line(16.5, 18, 21.5, 18)
         } else if (symbol === "document-x") {
             c.moveTo(12, 21); c.lineTo(4, 21); c.lineTo(4, 3)
@@ -71,7 +75,7 @@ Canvas {
             c.stroke(); c.beginPath()
             c.arc(18, 18, 4.5, 0, Math.PI * 2)
             c.fillStyle = tint; c.fill()
-            c.beginPath(); c.strokeStyle = "#1b2c40"
+            c.beginPath(); c.strokeStyle = cutoutColor
             line(16, 16, 20, 20); line(20, 16, 16, 20)
         } else if (symbol === "settings") {
             c.arc(12, 12, 6, 0, Math.PI * 2)
@@ -85,7 +89,7 @@ Canvas {
             // Sliders represent optional controls without implying gamepad support.
             line(5, 3, 5, 21); line(12, 3, 12, 21); line(19, 3, 19, 21)
             c.stroke(); c.beginPath()
-            c.fillStyle = "#172638"
+            c.fillStyle = fillColor
             c.rect(2, 7, 6, 4); c.rect(9, 14, 6, 4); c.rect(16, 6, 6, 4)
             c.fill()
         } else if (symbol === "streaming") {

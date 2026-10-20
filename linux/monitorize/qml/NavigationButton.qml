@@ -14,7 +14,7 @@ AbstractButton {
     }
     contentItem: ColumnLayout {
         spacing: 8
-        LineIcon { symbol: control.symbol; Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 28; Layout.preferredHeight: 28 }
-        Text { text: control.label; color: theme.textPrimary; font.pixelSize: 12; Layout.alignment: Qt.AlignHCenter }
+        LineIcon { symbol: control.symbol; tint: control.selected ? theme.buttonText : (theme.iconTint); Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: 28; Layout.preferredHeight: 28 }
+        Text { text: control.label; color: control.selected ? theme.buttonText : theme.textPrimary; font.pixelSize: 12; Layout.alignment: Qt.AlignHCenter }
     }
 }

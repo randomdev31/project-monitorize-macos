@@ -122,7 +122,7 @@ Item {
         Text {
             visible: !setupAvailable
             text: "System setup is available from the Monitorize RPM or DEB package."
-            color: "#fca5a5"
+            color: theme.errorText
             font.pixelSize: 12
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
@@ -131,7 +131,7 @@ Item {
         Text {
             text: statusMessage
             visible: statusMessage.length > 0
-            color: statusSucceeded ? "#86efac" : "#fca5a5"
+            color: statusSucceeded ? theme.successText : theme.errorText
             font.pixelSize: 12
             wrapMode: Text.WordWrap
             Layout.fillWidth: true

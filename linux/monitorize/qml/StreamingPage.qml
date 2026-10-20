@@ -48,7 +48,7 @@ Item {
             if (request !== page.pairRequest || !pinPopup.visible) return
             page.pairRequest = 0
             pinMessage.text = message
-            pinMessage.color = success ? "#86efac" : "#fca5a5"
+            pinMessage.color = success ? theme.successText : theme.errorText
             if (success) pinSuccessCloseTimer.restart()
         }
     }
@@ -366,7 +366,7 @@ Item {
                 Text {
                     visible: page.logOpenError.length > 0
                     text: page.logOpenError
-                    color: "#fca5a5"
+                    color: theme.errorText
                     Layout.fillWidth: true
                 }
             }
@@ -438,7 +438,7 @@ Item {
                 }
             }
             CustomTextField { id: presetName; Layout.fillWidth: true; placeholderText: "Preset name"; maximumLength: 32 }
-            Text { id: presetMessage; color: "#fca5a5"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { id: presetMessage; color: theme.errorText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             RowLayout {
                 Layout.alignment: Qt.AlignRight
                 CustomButton { text: "Cancel"; onClicked: presetPopup.close() }

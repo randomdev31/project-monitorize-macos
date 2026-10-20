@@ -127,7 +127,7 @@ Item {
             Text {
                 text: page.resultMessage
                 visible: text.length > 0
-                color: page.resultSucceeded ? theme.textSecondary : "#fca5a5"
+                color: page.resultSucceeded ? theme.textSecondary : theme.errorText
                 wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             RowLayout {

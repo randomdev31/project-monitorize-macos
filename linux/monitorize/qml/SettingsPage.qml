@@ -110,6 +110,25 @@ Item {
             Text { text: "Settings"; color: theme.textPrimary; font.pixelSize: 28; font.weight: Font.Bold }
             SectionCard {
                 title: "GENERAL"; symbol: "settings"; Layout.fillWidth: true
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: "Theme"; color: theme.textPrimary; font.pixelSize: 13 }
+                    Item { Layout.fillWidth: true }
+                    CustomComboBox {
+                        objectName: "themeModeCombo"
+                        Layout.preferredWidth: 180
+                        model: ["System", "Light", "Dark"]
+                        currentIndex: backend ? ["system", "light", "dark"].indexOf(backend.themeMode) : 0
+                        onActivated: backend.setThemeMode(["system", "light", "dark"][currentIndex])
+                    }
+                }
+                CustomCheckBox {
+                    objectName: "systemAccentCheck"
+                    text: "Use system accent color"
+                    checked: backend ? backend.useSystemAccent : false
+                    keepCheckedBlue: true
+                    onClicked: backend.setUseSystemAccent(checked)
+                }
                 CustomCheckBox {
                     keepCheckedBlue: true
                     id: minimizeTrayCheck; text: "Minimize to tray on close"
@@ -160,7 +179,7 @@ Item {
                 }
                 Text {
                     text: page.settingsError; visible: text.length > 0
-                    color: "#fca5a5"; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    color: theme.errorText; Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
                 Text {
                     text: backend.remoteLoginSetupBusy ? "Applying startup settings… Complete any administrator authorization prompt." : page.startupNotice
@@ -227,7 +246,7 @@ Item {
                     text: page.sunshineResetMessage
                     visible: text.length > 0
                     Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    color: page.sunshineResetSucceeded ? theme.textSecondary : "#fca5a5"
+                    color: page.sunshineResetSucceeded ? theme.textSecondary : theme.errorText
                 }
                 SettingsActionRow {
                     title: "Remove virtual display"

@@ -1,12 +1,11 @@
 """Monitorize desktop window and compatibility entrypoint."""
 
 import os
-import re
 import shutil
 import sys
 
 from PyQt6.QtCore import Qt, QProcess, QTimer, QUrl
-from PyQt6.QtGui import QColor, QIcon, QPalette
+from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtQuickWidgets import QQuickWidget
 from PyQt6.QtWidgets import (
@@ -234,33 +233,13 @@ class MonitorizeWindow(QMainWindow):
         return self.de
 
 
-def load_theme_color(property_name, default):
-    try:
-        with open(os.path.join(QML_DIR, "Theme.qml")) as theme:
-            match = re.search(
-                rf'property\s+color\s+{property_name}\s*:\s*"([^"]+)"',
-                theme.read(),
-            )
-            return match.group(1) if match else default
-    except OSError:
-        return default
-
-
 def _set_palette(app):
-    palette = QPalette()
-    colors = (
-        (QPalette.ColorRole.Window, "background", "#1b1e24"),
-        (QPalette.ColorRole.WindowText, "textLight", "#eff0f1"),
-        (QPalette.ColorRole.Base, "surface", "#232831"),
-        (QPalette.ColorRole.AlternateBase, "surfaceAlt", "#2b313b"),
-        (QPalette.ColorRole.Button, "surfaceAlt", "#2b313b"),
-        (QPalette.ColorRole.ButtonText, "textLight", "#eff0f1"),
-        (QPalette.ColorRole.Highlight, "accent", "#3daee9"),
-        (QPalette.ColorRole.HighlightedText, "textPrimary", "#eff0f1"),
-    )
-    for role, name, default in colors:
-        palette.setColor(role, QColor(load_theme_color(name, default)))
-    app.setPalette(palette)
+    from monitorize.config.settings import load_general_settings
+    from monitorize.desktop.appearance import apply_palette
+    def refresh(*_):
+        apply_palette(app, load_general_settings().get("theme_mode", "system"))
+    refresh()
+    app.styleHints().colorSchemeChanged.connect(refresh)
 
 
 def _start_in_tray_requested(argv):

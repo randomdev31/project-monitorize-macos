@@ -79,12 +79,15 @@ def save_general_settings(*, minimize_to_tray: bool | None = None,
                           sunshine_web_settings_enabled: bool | None = None,
                           client_listen_on_open: bool | None = None,
                           client_restart_on_crash: bool | None = None,
-                          display_behavior: str | None = None):
+                          display_behavior: str | None = None,
+                          theme_mode: str | None = None,
+                          use_system_accent: bool | None = None):
     values = {
         "minimize_to_tray": (
             bool(minimize_to_tray) if minimize_to_tray is not None else None
         ),
         "system_setup_decided": system_setup_decided,
+        "use_system_accent": use_system_accent,
         "sunshine_web_settings_enabled": sunshine_web_settings_enabled,
         "client_listen_on_open": client_listen_on_open,
         "client_restart_on_crash": client_restart_on_crash,
@@ -97,6 +100,10 @@ def save_general_settings(*, minimize_to_tray: bool | None = None,
         if display_behavior not in ('extend', 'primary', 'virtual_only'):
             raise ValueError('Unsupported display behavior.')
         values['display_behavior'] = display_behavior
+    if theme_mode is not None:
+        if theme_mode not in ("system", "light", "dark"):
+            raise ValueError("Unsupported theme mode.")
+        values["theme_mode"] = theme_mode
     _save_group("general", values)
 
 
@@ -106,14 +113,16 @@ def load_general_settings() -> dict:
         {"minimize_to_tray": False, "system_setup_decided": False,
          "sunshine_web_settings_enabled": False,
          "client_listen_on_open": False, "client_restart_on_crash": False,
-         "streaming_backend": "sunshine", "display_behavior": "extend"},
+         "streaming_backend": "sunshine", "display_behavior": "extend", "theme_mode": "system", "use_system_accent": False},
         ("minimize_to_tray", "system_setup_decided", "sunshine_web_settings_enabled",
-         "client_listen_on_open", "client_restart_on_crash"),
+         "client_listen_on_open", "client_restart_on_crash", "use_system_accent"),
     )
     if data.get("streaming_backend") not in ("sunshine", "none"):
         data["streaming_backend"] = "sunshine"
     if data.get('display_behavior') not in ('extend', 'primary', 'virtual_only'):
         data['display_behavior'] = 'extend'
+    if data.get("theme_mode") not in ("system", "light", "dark"):
+        data["theme_mode"] = "system"
     return data
 
 

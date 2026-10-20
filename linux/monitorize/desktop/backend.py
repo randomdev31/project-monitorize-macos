@@ -61,6 +61,8 @@ from monitorize.platform.vkms_backend import open_monitorize_vkms_install_page
 
 class MonitorizeBackend(QObject):
     UI_LOG_TAIL_BYTES = 16 * 1024
+    themeModeChanged = pyqtSignal()
+    accentChanged = pyqtSignal()
     sunshineSettingsChanged = pyqtSignal()
     sessionChanged = pyqtSignal()
     detectedDeChanged = pyqtSignal(str)
@@ -156,7 +158,14 @@ class MonitorizeBackend(QObject):
         self._system_setup_timeout.timeout.connect(self._timeout_system_setup)
         self._local_ip = get_local_ip()
         self._sunshine_available = find_sunshine_command(1) is not None
+        from monitorize.desktop.system_accent import system_accent
+        self._accent_source = system_accent(QGuiApplication.instance())
+        self._accent_source.changed.connect(self._on_system_accent_changed)
+        if isinstance(QGuiApplication.instance(), QGuiApplication):
+            QGuiApplication.styleHints().colorSchemeChanged.connect(self._on_system_accent_changed)
         general = load_general_settings()
+        if general.get("use_system_accent", False):
+            self._accent_source.refresh()
         self._streaming_backend = general.get("streaming_backend", "sunshine")
         self._web_settings_enabled = general.get("sunshine_web_settings_enabled", False)
         if not self._sunshine_available:
@@ -1215,6 +1224,48 @@ class MonitorizeBackend(QObject):
             app_log.write("SUNSHINE", message, level=logging.ERROR)
         self.sunshineChoicesFinished.emit(instance, success, "" if success else message)
         self._launch_next_sunshine_save()
+
+    def _on_system_accent_changed(self):
+        if self.useSystemAccent:
+            from monitorize.desktop.appearance import apply_palette
+            apply_palette(QGuiApplication.instance(), self.themeMode)
+            self.accentChanged.emit()
+
+    @pyqtProperty(bool, notify=accentChanged)
+    def useSystemAccent(self):
+        return load_general_settings().get("use_system_accent", False)
+
+    @pyqtProperty("QVariantMap", notify=accentChanged)
+    def systemAccentColors(self):
+        from monitorize.desktop.appearance import accent_colors
+        from PyQt6.QtCore import Qt
+        dark = self.themeMode == "dark" or (self.themeMode == "system" and
+               QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark)
+        return accent_colors(self._accent_source.color, dark)
+
+    @pyqtSlot(bool)
+    def setUseSystemAccent(self, enabled):
+        save_general_settings(use_system_accent=enabled)
+        if enabled:
+            self._accent_source.refresh()
+        from monitorize.desktop.appearance import apply_palette
+        apply_palette(QGuiApplication.instance(), self.themeMode, enabled)
+        self.accentChanged.emit()
+
+    @pyqtProperty(str, notify=themeModeChanged)
+    def themeMode(self):
+        return load_general_settings().get("theme_mode", "system")
+
+    @pyqtSlot(str)
+    def setThemeMode(self, mode):
+        if mode not in ("system", "light", "dark"):
+            return
+        save_general_settings(theme_mode=mode)
+        from monitorize.desktop.appearance import apply_palette
+        from PyQt6.QtWidgets import QApplication
+        apply_palette(QApplication.instance(), mode)
+        self.themeModeChanged.emit()
+        self.accentChanged.emit()
 
     @pyqtSlot(result="QVariant")
     def loadGeneralSettings(self):

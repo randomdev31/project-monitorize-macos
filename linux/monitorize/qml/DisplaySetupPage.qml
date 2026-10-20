@@ -301,7 +301,7 @@ Item {
                         visible: page.vkmsSelected && !backend.vkmsHelperAvailable
                         Layout.columnSpan: 2; Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        color: "#ff9a9a"
+                        color: theme.errorText
                         text: backend.vkmsAvailabilityMessage
                     }
                     CustomButton {
@@ -371,7 +371,7 @@ Item {
                         anchors { left: parent.left; right: parent.right; margins: 14 }
                         spacing: 10
                         LineIcon { symbol: "plus"; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
-                        Text { text: "Add Display"; color: addDisplayButton.enabled ? "#94caff" : theme.textMuted; font.pixelSize: 14; font.weight: Font.DemiBold }
+                        Text { text: "Add Display"; color: addDisplayButton.enabled ? theme.headingText : theme.textMuted; font.pixelSize: 14; font.weight: Font.DemiBold }
                     }
                 }
             }
@@ -407,31 +407,12 @@ Item {
                             page.saveSettings()
                         }
                     }
-                    CustomButton {
-                        id: virtualOnlyHelpButton
-                        text: "?"; primary: false; implicitWidth: 32
-                        onClicked: virtualOnlyHint.open()
+                    StartupHelp {
+                        helpText: "Creates the virtual display without starting Monitorize’s streaming backend. Use your preferred streamer instead."
                     }
                     Item { Layout.fillWidth: true }
                 }
             }
-        }
-    }
-    Popup {
-        id: virtualOnlyHint; parent: Overlay.overlay
-        width: Math.min(390, parent.width - 24); padding: 18; focus: true
-        onAboutToShow: {
-            let button = virtualOnlyHelpButton.mapToItem(parent, 0, 0)
-            x = Math.max(12, Math.min(button.x + virtualOnlyHelpButton.width - width, parent.width - width - 12))
-            let above = button.y - height - 8
-            y = Math.max(12, Math.min(above >= 12 ? above : button.y + virtualOnlyHelpButton.height + 8,
-                                     parent.height - height - 12))
-        }
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: theme.surface; border.color: theme.borderHover; radius: theme.cardRadius }
-        contentItem: Text {
-            text: "Creates the virtual display without starting Monitorize’s streaming backend. Use your preferred streamer instead."
-            color: theme.textSecondary; font.pixelSize: 12; wrapMode: Text.WordWrap
         }
     }
 }
