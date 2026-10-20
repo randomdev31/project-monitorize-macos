@@ -10,6 +10,8 @@ import sys
 
 
 REQUIRED = {
+    'src/listener_codec_policy.h': ('MONITORIZE_CODEC_NEGOTIATION=1', 'forced_format', 'advertise'),
+    'src/listener_probe_display.h': ('listener_probe_display', 'make_avcodec_encode_device'),
     'src/monitorize_control.h': ('MONITORIZE_CONTROL_PROTOCOL=1', 'MONITORIZE_LAYOUT_RECOVERY=1'),
     'src/main.cpp': ('monitorize_control::protocol_marker',),
     'src/nvhttp.cpp': ('prepare_managed_display', 'monitorize_control::bind_target',

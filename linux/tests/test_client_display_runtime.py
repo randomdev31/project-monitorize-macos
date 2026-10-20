@@ -118,6 +118,30 @@ class ClientDisplayRuntimeTest(unittest.TestCase):
         self.assertFalse(self.runtime.start_slot(2, {'de': 'unknown'}))
         self.assertNotIn(2, self.runtime.slots)
 
+    def test_app_selected_mode_starts_listener_without_display(self):
+        with patch.object(self.runtime,'_prepare') as prepare:
+            self.assertTrue(self.runtime.start_slot(2,dict(de='kde',use_client_display_settings=False,
+                resolution='2304x1440',fps='90')))
+            prepare.assert_not_called()
+            self.assertFalse(self.runtime.slots[2].target)
+            self.assertEqual(self.runtime.slots[2].status,'waiting')
+
+    def test_app_selected_mode_is_used_after_authenticated_prepare(self):
+        slot=self.runtime.slots[1]
+        slot.config.update(use_client_display_settings=False,resolution='2304x1440',fps='90')
+        def ready(current):
+            self.runtime._reply(current.pending.pop(),target={'output_name':'Virtual-1'})
+        with patch.object(self.runtime,'_prepare',side_effect=ready):
+            self.assertTrue(self.exchange(self.request(width=1280,height=720,fps=30))['ok'])
+        self.assertEqual(slot.requested,(2304,1440,90))
+
+    def test_invalid_app_mode_fails_before_listener_launch(self):
+        with patch.object(self.runtime,'_launch') as launch:
+            self.assertFalse(self.runtime.start_slot(2,dict(de='kde',use_client_display_settings=False,
+                resolution='bad',fps='60')))
+            launch.assert_not_called()
+
+
 class ClientDisplayLifecycleTest(ClientDisplayRuntimeTest):
     def test_prepare_waits_for_readiness_and_preserves_exact_target(self):
         from monitorize.desktop.client_display_runtime import ClientSlot
@@ -412,12 +436,20 @@ class ClientDisplayLifecycleTest(ClientDisplayRuntimeTest):
                 process.kill()
                 process.waitForFinished(1000)
 
-    def test_client_listener_rejects_unadvertised_codec_without_starting(self):
-        for codec in ('HEVC', 'AV1', 'H.265'):
-            with patch('monitorize.desktop.client_display_runtime.start_sunshine', return_value=(True, '')) as start:
-                self.assertFalse(self.runtime.start_slot(2, {'de': 'kde', 'codec': codec}))
-                start.assert_not_called()
-            self.assertIn('H.264', self.runtime.error)
+    def test_listener_accepts_explicit_codecs_with_capable_engine(self):
+        for codec in ('Auto','H.264','HEVC','AV1'):
+            with patch('monitorize.desktop.client_display_runtime.start_sunshine',return_value=(True,'')) as start:
+                self.assertTrue(self.runtime.start_slot(2,{'de':'kde','codec':codec}))
+                start.assert_called_once()
+            self.runtime.stop_slot(2)
+
+    def test_old_listener_engine_is_rejected_before_launch(self):
+        with patch('monitorize.desktop.client_display_runtime.supports_control_protocol',
+                   side_effect=lambda instance,**kwargs:kwargs.get('marker')!=b'MONITORIZE_CODEC_NEGOTIATION=1'), \
+             patch('monitorize.desktop.client_display_runtime.start_sunshine') as start:
+            self.assertFalse(self.runtime.start_slot(2,{'de':'kde','codec':'AV1'}))
+            start.assert_not_called()
+        self.assertIn('codec negotiation',self.runtime.error)
 
     def test_x11_target_resolves_drm_name_to_exact_xrandr_alias(self):
         from PyQt6.QtCore import QTimer

@@ -106,6 +106,19 @@ class ClientDisplayRuntime(QObject):
         return [dict(instance=s.instance, status=s.status, client_id=s.owner, error=s.error,
                      target=dict(s.target)) for s in self.slots.values()]
 
+    @staticmethod
+    def configured_mode(config):
+        resolution=str(config.get('resolution',config.get('res','1920x1080')))
+        if resolution.lower()=='custom':
+            width,height=int(config['custom_w']),int(config['custom_h'])
+        else:width,height=map(int,resolution.lower().split('x'))
+        fps=float(config.get('custom_fps') if str(config.get('fps')).lower()=='custom' else config.get('fps',60))
+        if not 320<=width<=16384 or not 200<=height<=16384 or not math.isfinite(fps) or not 1<=fps<=1000:
+            raise ValueError('Unsupported configured display mode.')
+        if config.get('virtual_display_creator','native')!='vkms' and fps!=int(fps):
+            raise ValueError('Fractional refresh requires VKMS.')
+        return width,height,fps
+
     def start_slot(self, instance, config):
         if not self._validate_layout(config, instance):
             return False
@@ -120,9 +133,10 @@ class ClientDisplayRuntime(QObject):
             return False
         if instance in self.slots:
             return True
-        if str(config.get('codec', 'Auto')).strip().lower() not in ('auto', 'h.264', 'h264', 'avc'):
-            self.error = 'Client-controlled listening currently supports Auto or H.264 only.'
-            return False
+        if config.get('use_client_display_settings',True) is False:
+            try:self.configured_mode(config)
+            except (ValueError,KeyError,TypeError) as error:
+                self.error=str(error);return False
         creator = config.get('virtual_display_creator', 'native')
         if creator == 'vkms':
             from monitorize.platform.monitorize_vkms_dbus import MonitorizeVkmsClient, MonitorizeVkmsError
@@ -143,6 +157,9 @@ class ClientDisplayRuntime(QObject):
             return False
         if not supports_control_protocol(instance):
             self.error = 'Rebuild or install Monitorize Sunshine with client display protocol v1.'
+            return False
+        if not supports_control_protocol(instance,marker=b'MONITORIZE_CODEC_NEGOTIATION=1'):
+            self.error='Rebuild or install Monitorize Sunshine with codec negotiation protocol v1.'
             return False
         os.makedirs(self._directory, mode=0o700, exist_ok=True)
         if not self._server.isListening() and not self._server.listen(self.socket_path):
@@ -240,6 +257,8 @@ class ClientDisplayRuntime(QObject):
                 log = source.read(MAX_MESSAGE).decode('utf-8', 'replace')
         except OSError:
             return 'pending', ''
+        if 'MONITORIZE_CODEC_PROBE_FAILED' in log:
+            return 'failed', f"Selected encoder/codec ({slot.config.get('encoder', 'Auto')} / {slot.config.get('codec', 'Auto')}) failed its codec test. Inspect Sunshine logs; no codec fallback was used."
         if 'Fatal:' in log:
             return 'failed', 'Sunshine reported a fatal startup error; inspect its log.'
         if 'MONITORIZE_CONTROL_PROTOCOL=1' in log and 'Configuration UI available at' in log:
@@ -316,6 +335,11 @@ class ClientDisplayRuntime(QObject):
             slot.error = self.error = 'Monitorize Sunshine control protocol v1 is unavailable; rebuild or reinstall the engine.'
             slot.status = 'error'
             return False
+        if not slot.manual and not supports_control_protocol(slot.instance,marker=b'MONITORIZE_CODEC_NEGOTIATION=1'):
+            slot.permanent_failure=True
+            slot.error=self.error='Rebuild or install Monitorize Sunshine with codec negotiation protocol v1.'
+            slot.status='error'
+            return False
         if not self._claim_instance(slot.instance):
             slot.error = self.error
             slot.status = 'error'
@@ -334,11 +358,12 @@ class ClientDisplayRuntime(QObject):
             ok, message = save_sunshine_config({'stream_audio': 'enabled' if config.get('enable_audio', True) else 'disabled'}, instance=slot.instance)
         if ok:
             self._mark_log_start(slot)
-            slot.startup_deadline = time.monotonic() + 20
+            slot.startup_deadline = time.monotonic() + 90
             ok, message = start_sunshine(instance=slot.instance, extra_environment={**environment,
                 'MONITORIZE_CONTROL_SOCKET': self.socket_path,
                 'MONITORIZE_CONTROL_TOKEN': self.token,
                 'MONITORIZE_CONTROL_INSTANCE': str(slot.instance),
+                'MONITORIZE_REQUIRE_CODEC_NEGOTIATION': '1',
                 'MONITORIZE_REQUIRE_LAYOUT_RECOVERY': '1' if config.get('display_behavior', 'extend') != 'extend' else '0',
             })
         if not ok:
@@ -426,6 +451,8 @@ class ClientDisplayRuntime(QObject):
             width, height, fps = request.get('width'), request.get('height'), request.get('fps')
             if type(width) is not int or type(height) is not int or not 320 <= width <= 16384 or not 200 <= height <= 16384 or type(fps) not in (float, int) or not math.isfinite(fps) or not 1 <= fps <= 1000:
                 raise ValueError('Unsupported requested display mode.')
+            if slot.config.get('use_client_display_settings',True) is False:
+                width,height,fps=self.configured_mode(slot.config)
             mode = width, height, fps
             if slot.owner:
                 if slot.requested != mode:

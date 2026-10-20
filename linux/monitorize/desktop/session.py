@@ -58,17 +58,14 @@ class Session(QObject):
     def has_client_cards(self):
         if self.controller.streaming_backend == "none" or self.configuration()["display_type"] != "Extend":
             return False
-        configs = [self.configuration()]
-        if self.count == 2:
-            configs.append(self.second_configuration())
-        return any(c.get("use_client_display_settings", False) for c in configs)
+        return True
 
     def display_behavior(self):
         settings = self.preset_configuration if self.preset_configuration is not None else load_general_settings()
         return settings.get('display_behavior', 'extend')
 
     def uses_managed_runtime(self):
-        return self.has_client_cards() or (self.mode == 'Extend' and self.display_behavior() != 'extend')
+        return self.has_client_cards() or (self.controller.streaming_backend != 'none' and self.mode == 'Extend' and self.display_behavior() != 'extend')
 
     def configured_snapshot(self):
         """Save configured intent, including a listener that has no display yet."""
@@ -96,15 +93,11 @@ class Session(QObject):
         for instance, config in configs:
             if instance in runtime.slots:
                 continue
-            requested = config.get("use_client_display_settings", False)
-            if listeners_only and not requested:
-                continue
             config = {**config, "de": self.controller.de,
                       "display_behavior": self.display_behavior(),
                       "resolution": config["res"],
                       "client_restart_on_crash": general.get("client_restart_on_crash", False)}
-            start = runtime.start_slot if requested else runtime.start_manual_slot
-            if not start(instance, config):
+            if not runtime.start_slot(instance, config):
                 self.controller._set_status(str(runtime.error))
                 self.controller.startFailed.emit()
         self.running = bool(runtime.active)

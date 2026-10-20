@@ -33,3 +33,38 @@ package discovery. The guardian runs as the desktop user and uses existing
 `kscreen-doctor`; it requires no new root entrypoint. Its session journal and lock
 must not be removed while recovery owns a live output. Full host rebuild and live
 layout/capture/input/recovery QA are required; source/unit proof is insufficient.
+
+
+Streaming Extend sessions now always launch listeners first. Each slot creates
+its display only after an authenticated prepare request. `use_client_display_settings`
+selects the mode source: true uses the request, false uses the saved app mode.
+Both use the same readiness, disconnect grace, cleanup/recreation and retry path.
+Display-only (`streaming_backend=none`) still creates immediately without Sunshine;
+Mirror uses its existing screen. Listeners require passwordless VKMS enrollment for unattended VKMS creation.
+Codec negotiation now also requires `MONITORIZE_CODEC_NEGOTIATION=1`; rebuild
+the paired Sunshine fork after updating source.
+
+
+## Listener codec negotiation
+
+Before opening discovery/listening sockets, the Linux engine tests encoding SDR
+black frames in memory through existing software/VAAPI/NVENC upload devices.
+No virtual display is created and no desktop is captured. Auto advertises only
+codecs that passed on its selected encoder; explicit H.264/HEVC/AV1 is enforced
+at RTSP negotiation, rejecting mismatches rather than substituting codecs.
+H.264 remains the protocol baseline bit even when an advanced codec is forced;
+a client selecting that baseline is rejected by the explicit-codec policy.
+After authenticated display preparation, normal capture-dependent encoder probing
+runs again; the synthetic probe never leaves a cached capture encoder selected.
+Discovery advertises SDR 4:2:0 only; HDR and 4:4:4 are not claimed for listeners.
+Vulkan-only encoders cannot currently use the RAM preflight path and are rejected
+rather than advertised without testing. Startup probing has a 90-second app
+readiness window. Driver/GPU changes are rechecked on actual launch; reconnect or
+restart listening to refresh discovery capabilities after hardware changes.
+
+Source checks: 132 focused Python tests, isolated C++ codec-policy assertions,
+and compiler syntax checks of video/main/nvhttp/rtsp. A full engine rebuild and
+real GPU/client negotiation remain required. Test explicit and Auto on both sides,
+unsupported codecs, two independent listeners, disconnect/reconnect, and confirm
+the actual codec in the client statistics. No codec switch occurs after decoding
+has begun.

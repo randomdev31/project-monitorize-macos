@@ -106,6 +106,7 @@ class MonitorizeBackend(QObject):
     remoteLoginChanged = pyqtSignal()
     remoteLoginSetupChanged = pyqtSignal()
     remoteLoginSetupFinished = pyqtSignal("QVariantMap")
+    remoteLoginSetupBlocked = pyqtSignal(str)
     _remoteLoginSetupWorkerFinished = pyqtSignal("QVariantMap")
 
     def __init__(self, de, parent=None):
@@ -313,7 +314,12 @@ class MonitorizeBackend(QObject):
     def configureRemoteLogin(self, enabled):
         if self._remote_setup_busy or self._closing:
             return
-        if enabled and self.session.active:
+        if enabled and str(load_display_settings().get('sunshine_capture','auto')).strip().lower() != 'kms':
+            message='Set the capture method to KMS in Sunshine settings before enabling Start at boot.'
+            self.remoteLoginSetupFinished.emit({'success':False,'message':message})
+            self.remoteLoginSetupBlocked.emit(message)
+            return
+        if self.session.active or self.session.busy or (getattr(self, "_remote_login", None) is not None and self._remote_login.status.get("capture_ready")):
             self.remoteLoginSetupFinished.emit({"success": False, "message": "Stop the current stream before configuring remote login."})
             return
         self._remote_setup_busy = True
@@ -1221,12 +1227,7 @@ class MonitorizeBackend(QObject):
     @pyqtProperty(bool, notify=clientDisplaySettingsChanged)
     def clientDisplaySettingsAvailable(self):
         primary = load_display_settings()
-        second = load_second_display_settings()
-        return (self.streamingBackend == "sunshine"
-                and (primary["display_type"] == "Mirror" or
-                     (primary["display_type"] == "Extend" and
-                      (primary["use_client_display_settings"] or
-                       (second["enabled"] and second["use_client_display_settings"])))))
+        return self.streamingBackend == "sunshine" and primary["display_type"] in ("Mirror","Extend")
 
     @pyqtSlot(bool, bool)
     def saveClientListenerSettings(self, listen_on_open, restart_on_crash):

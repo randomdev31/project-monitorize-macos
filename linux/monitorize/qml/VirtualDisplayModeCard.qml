@@ -139,26 +139,27 @@ Rectangle {
         }
 
         RowLayout {
+            spacing: 8
             Layout.fillWidth: true
             CustomCheckBox {
                 text: "Use client display settings"
                 checked: !!(card.displayConfig && card.displayConfig.use_client_display_settings)
                 enabled: card.clientSettingsAvailable && card.sunshineEnabled
-                Layout.fillWidth: true
+                Layout.fillWidth: false
                 onClicked: card.commit({use_client_display_settings: checked})
             }
             ToolButton {
                 id: clientInfo
-                text: "ⓘ"
+                text: "?"
                 Accessible.name: "About client display settings"
-                property string helpText: "Create this display when Moonlight or Artemis starts streaming.\nUse the client's selected resolution and frame rate."
+                property string helpText: "Create the display when a client connects.\nChecked: use client display settings. Unchecked: use Monitorize’s resolution and refresh rate."
                 ToolTip.visible: hovered
                 ToolTip.text: helpText
                 onClicked: clientHelp.open()
                 Popup {
                     id: clientHelp
                     width: Math.min(360, card.width - 32)
-                    x: Math.min(0, clientInfo.width - width)
+                    x: 0
                     y: clientInfo.height
                     padding: 12
                     contentItem: Text {
@@ -169,6 +170,7 @@ Rectangle {
                     background: Rectangle { color: theme.surface; border.color: theme.border; radius: theme.controlRadius }
                 }
             }
+            Item { Layout.fillWidth: true }
         }
 
         GridLayout {

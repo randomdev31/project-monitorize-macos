@@ -195,14 +195,19 @@ def disable(uid):
     settings=read_settings()
     if uid!=settings.uid:raise PermissionError('Only the enrolled account can disable remote login.')
     commands=Commands()
-    commands.run(['/usr/bin/systemctl','stop','monitorize-remote-login.service'])
+    commands.run(['/usr/bin/systemctl','stop','monitorize-remote-login.service',
+                  f'monitorize-remote-login-boot@{uid}.service',f'monitorize-remote-login-desktop@{uid}.service'])
     with acquire_identity_lock(identity_paths(settings.directory),uid=uid):pass
     files=RootFiles()
     values=dict(schema_version=1,enabled=False,uid=settings.uid,gid=settings.gid,username=settings.username,
                 home=settings.home,profile=settings.profile,manager='plasmalogin.service',encoder=settings.encoder,adapter=settings.adapter)
     configure_disabled(values,files=files,commands=commands)
     restore_linger(uid,commands=commands)
-    return dict(success=True,reboot_required=True,message='Remote login disabled. Reboot to release the protected boot display. Pairing and Wi-Fi settings are retained.')
+    try:remove_reserved(uid)
+    except Exception as error:
+        return dict(success=False,partial=True,cleanup_pending=True,reboot_required=False,
+                    message='Boot startup is disabled, but display release needs retry: '+str(error))
+    return dict(success=True,reboot_required=False,message='Boot startup disabled. Normal streaming is available now. Pairing and Wi-Fi settings are retained.')
 
 
 def remove_reserved(uid):
@@ -237,8 +242,8 @@ def remove_reserved(uid):
         with acquire_identity_lock(identity_paths(settings.directory),uid=uid):
             from monitorize_vkms import helper
             session,_=helper._active_session(uid)
-            desktop_operation_installed(uid,session,'idle',engines_stopped=True)
-        return dict(success=True,changed=True,message='Reserved remote-login display removed. Pairing and reservation retained.')
+            desktop_operation_installed(uid,session,'idle' if settings.enabled else 'release',engines_stopped=True)
+        return dict(success=True,changed=True,message='Reserved remote-login display removed. '+('Pairing and reservation retained.' if settings.enabled else 'Slot released for normal streaming; pairing retained.'))
     finally:bus.close()
 
 

@@ -24,6 +24,31 @@ Canvas {
             if (symbol === "session") {
                 c.moveTo(10, 8); c.lineTo(15, 11); c.lineTo(10, 14); c.closePath()
             }
+        } else if (symbol === "wifi-settings") {
+            // W1: compact Wi-Fi arcs with a lower-right settings badge.
+            c.moveTo(2, 8.5); c.quadraticCurveTo(10, 2.6, 18, 8.5)
+            c.moveTo(4.5, 10.8); c.quadraticCurveTo(10, 6.9, 15.5, 10.8)
+            c.moveTo(7, 13.1); c.quadraticCurveTo(10, 11.2, 13, 13.1)
+            c.moveTo(10.8, 15.9); c.arc(10, 15.9, 0.8, 0, Math.PI * 2)
+            for (let i = 0; i < 32; i++) {
+                let angle = -Math.PI / 2 + i * Math.PI / 16
+                let radius = (i % 4 === 0 || i % 4 === 3) ? 4.7 : 3.7
+                let x = 18 + radius * Math.cos(angle)
+                let y = 16.5 + radius * Math.sin(angle)
+                if (i === 0) c.moveTo(x, y)
+                else c.lineTo(x, y)
+            }
+            c.closePath()
+            c.moveTo(19.5, 16.5); c.arc(18, 16.5, 1.5, 0, Math.PI * 2)
+            c.stroke(); c.beginPath()
+        } else if (symbol === "key-slash") {
+            // P3: a crossed-out key for passwordless creation.
+            c.arc(7, 12, 5, 0, Math.PI * 2)
+            c.moveTo(8.5, 12); c.arc(7, 12, 1.5, 0, Math.PI * 2)
+            line(11, 9, 21, 9); line(21, 9, 21, 13)
+            line(21, 13, 18, 16); line(18, 16, 15.5, 13.5)
+            line(15.5, 13.5, 13, 16); line(13, 16, 11, 15)
+            line(4, 3, 21, 21)
         } else if (symbol === "reset") {
             c.moveTo(4, 11); c.arc(12, 12, 8, Math.PI + 0.13, Math.PI * 1.84)
             line(19, 3, 19, 8); line(19, 8, 14, 8)

@@ -7,6 +7,10 @@ from monitorize.platform import virtual_display_cleanup as cleanup
 
 
 class VirtualDisplayCleanupTest(unittest.TestCase):
+    def setUp(self):
+        lookup=patch.object(cleanup.shutil,'which',return_value=None)
+        lookup.start();self.addCleanup(lookup.stop)
+
     def test_exact_helper_matching(self):
         self.assertTrue(cleanup._is_display_owner(['/usr/bin/python3', '-m', 'monitorize.streaming.headless_virtual_display', '1920']))
         self.assertTrue(cleanup._is_display_owner(['/opt/monitorize-kde-virtual-output', 'Monitorize-1']))
@@ -68,3 +72,22 @@ class VirtualDisplayCleanupTest(unittest.TestCase):
         self.assertFalse(result['success'])
         self.assertIn('legacy stock VKMS recovery record', result['message'])
         client.remove_all.assert_not_called()
+
+    def test_cli_removes_reserved_output_in_addition_to_compositor_cleanup(self):
+        import subprocess
+        with patch.object(cleanup.shutil,'which',return_value='/usr/bin/monitorize-vkms'), \
+             patch.object(cleanup.subprocess,'run',return_value=subprocess.CompletedProcess([],0,
+                 '{"success":true,"removed":true}')) as run:
+            result,client=self.run_cleanup('kde',native=1)
+        self.assertTrue(result['success'])
+        self.assertEqual(run.call_args.args[0],['/usr/bin/monitorize-vkms','remove','--json'])
+        client.remove_all.assert_not_called()
+
+    def test_cli_permission_failure_is_reported(self):
+        import subprocess
+        with patch.object(cleanup.shutil,'which',return_value='/usr/bin/monitorize-vkms'), \
+             patch.object(cleanup.subprocess,'run',return_value=subprocess.CompletedProcess([],1,
+                 '{"success":false,"message":"Authorization cancelled"}')):
+            result,_=self.run_cleanup('kde',native=1)
+        self.assertFalse(result['success'])
+        self.assertIn('Authorization cancelled',result['message'])

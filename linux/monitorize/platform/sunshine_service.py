@@ -697,6 +697,10 @@ def start_sunshine(
         candidates = [cmd for cmd in candidates if sunshine_supports_client_display_protocol(cmd[0])]
         if not candidates:
             return False, "Rebuild or install Monitorize Sunshine with client display protocol v1."
+    if (extra_environment or {}).get('MONITORIZE_REQUIRE_CODEC_NEGOTIATION') == '1':
+        candidates = [cmd for cmd in candidates if sunshine_supports_client_display_protocol(cmd[0], b'MONITORIZE_CODEC_NEGOTIATION=1')]
+        if not candidates:
+            return False, 'Rebuild or install Monitorize Sunshine with codec negotiation protocol v1.'
     if (extra_environment or {}).get('MONITORIZE_REQUIRE_LAYOUT_RECOVERY') == '1':
         candidates = [cmd for cmd in candidates if sunshine_supports_client_display_protocol(cmd[0], b'MONITORIZE_LAYOUT_RECOVERY=1')]
         if not candidates:

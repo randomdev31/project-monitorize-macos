@@ -11,6 +11,7 @@ Item {
     property bool settingsAutostartEnabled: false
     property string settingsError: ""
     property string startupNotice: ""
+    property bool startupCleanupPending: false
     property int loginAfterBootDisable: -1
     property string sunshineResetMessage: ""
     property bool sunshineResetSucceeded: false
@@ -52,8 +53,9 @@ Item {
             page.vkmsAuthorization = result
         }
         function onRemoteLoginSetupFinished(result) {
+            page.startupCleanupPending = result.cleanup_pending === true
             page.settingsError = result.success ? "" : (result.message || "Startup setup failed.")
-            page.startupNotice = result.success && result.reboot_required ? "Startup settings saved. Reboot to apply the change." : ""
+            page.startupNotice = result.success ? (result.reboot_required ? "Startup settings saved. Reboot to apply the change." : (result.message || "Startup settings saved.")) : ""
             page.refreshStartup()
             if (result.success && !page.bootStatus.enabled && page.loginAfterBootDisable >= 0) {
                 let error = backend.setAutostartEnabled(page.loginAfterBootDisable === 1)
@@ -114,42 +116,45 @@ Item {
                     Layout.fillWidth: true; onCheckedChanged: page.saveAppSettings()
                 }
                 RowLayout {
+                    spacing: 8
                     Layout.fillWidth: true
                     CustomCheckBox {
                         keepCheckedBlue: true
                         id: autostartCheck; objectName: "loginStartupCheck"; text: "Start Monitorize after login"
                         enabled: !backend.remoteLoginSetupBusy
-                        Layout.fillWidth: true; onClicked: page.saveAutostartSettings()
+                        Layout.fillWidth: false; onClicked: page.saveAutostartSettings()
                     }
                     StartupHelp { helpText: "Starts Monitorize after you sign in and reach your desktop." }
+                    Item { Layout.fillWidth: true }
                     ToolButton {
                         objectName: "bootStartupExpander"
                         text: page.bootOptionsExpanded ? "⌃" : "⌄"
-                        enabled: autostartCheck.checked
                         Accessible.name: "Show boot startup options"
                         onClicked: page.bootOptionsExpanded = !page.bootOptionsExpanded
                     }
                 }
                 RowLayout {
+                    spacing: 8
                     id: bootOptions
                     objectName: "bootStartupOptions"
-                    visible: autostartCheck.checked && page.bootOptionsExpanded
+                    visible: page.bootOptionsExpanded
                     Layout.fillWidth: true
                     Layout.leftMargin: 24
                     CustomCheckBox {
                         keepCheckedBlue: true
                         id: bootCheck; objectName: "bootStartupCheck"; text: "Also start at boot (login screen)"
-                        Layout.fillWidth: true
-                        enabled: !backend.remoteLoginSetupBusy && page.bootStatus.available && (page.bootStatus.supported || page.bootStatus.enabled)
+                        Layout.fillWidth: false
+                        enabled: autostartCheck.checked && !backend.remoteLoginSetupBusy && page.bootStatus.available && (page.bootStatus.supported || page.bootStatus.enabled)
                         onClicked: {
                             page.loginAfterBootDisable = checked ? -1 : 1
                             backend.configureRemoteLogin(checked)
                         }
                     }
                     StartupHelp { helpText: "Makes Monitorize streaming available at the login screen.\nAfter signing in, reconnect to the same Moonlight PC. Desktop startup is included." }
+                    Item { Layout.fillWidth: true }
                 }
                 Text {
-                    visible: autostartCheck.checked && page.bootOptionsExpanded && (!page.bootStatus.available || (!page.bootStatus.supported && !page.bootStatus.enabled))
+                    visible: page.bootOptionsExpanded && (!page.bootStatus.available || (!page.bootStatus.supported && !page.bootStatus.enabled))
                     text: page.bootStatus.message || ""
                     color: theme.textSecondary; Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
@@ -161,6 +166,12 @@ Item {
                     text: backend.remoteLoginSetupBusy ? "Applying startup settings… Complete any administrator authorization prompt." : page.startupNotice
                     visible: text.length > 0
                     color: theme.textSecondary; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
+                CustomButton {
+                    text: "Retry display release"
+                    visible: page.startupCleanupPending
+                    enabled: !backend.remoteLoginSetupBusy
+                    onClicked: backend.configureRemoteLogin(false)
                 }
                 CustomCheckBox {
                     keepCheckedBlue: true
@@ -185,17 +196,17 @@ Item {
                 SettingsActionRow {
                     title: "Wi-Fi before login"
                     description: "Configure a NetworkManager Wi-Fi profile to connect before desktop login."
-                    symbol: "settings"; actionText: "Configure"
+                    symbol: "wifi-settings"; actionText: "Configure"
                     Layout.fillWidth: true
                     onClicked: page.StackView.view.push("BootWifiSetupPage.qml")
                 }
                 SettingsActionRow {
-                    title: "Unattended VKMS displays"
+                    title: "Passwordless display creation (VKMS)"
                     description: page.vkmsChecking ? "Checking authorization…" : page.vkmsAuthorizationMessage.length > 0 ? page.vkmsAuthorizationMessage : page.vkmsAuthorization.success
-                        ? (page.vkmsAuthorization.unattended_enabled ? "Enabled for your user. Display creation does not request a password." : "Authorize your user once for virtual display creation without recurring password prompts.")
+                        ? (page.vkmsAuthorization.repair_required ? page.vkmsAuthorization.message : page.vkmsAuthorization.unattended_enabled ? "Enabled for your user. Display creation does not request a password." : "Authorize your user once for virtual display creation without recurring password prompts.")
                         : (page.vkmsAuthorization.message || "Install or upgrade monitorize-vkms first.")
-                    symbol: "display"
-                    actionText: page.vkmsChecking ? "Checking…" : !page.vkmsAuthorization.success ? "Retry" : page.vkmsAuthorization.unattended_enabled ? "Disable" : "Enable"
+                    symbol: "key-slash"
+                    actionText: page.vkmsChecking ? "Checking…" : !page.vkmsAuthorization.success ? "Retry" : page.vkmsAuthorization.repair_required ? "Reauthorize" : page.vkmsAuthorization.unattended_enabled ? "Disable" : "Enable"
                     actionEnabled: !page.vkmsChecking && !backend.isStreaming && !backend.sessionBusy && !backend.systemSetupRunning
                     Layout.fillWidth: true
                     onClicked: {

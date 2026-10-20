@@ -399,7 +399,7 @@ Item {
                     Layout.fillWidth: true
                     CustomCheckBox {
                         id: createOnly; text: "Create virtual display only"
-                        enabled: backend.sunshineAvailable; Layout.fillWidth: true
+                        enabled: backend.sunshineAvailable; Layout.fillWidth: false
                         onCheckedChanged: {
                             if (page.loading) return
                             if (checked && displayType.currentText === "Mirror") displayType.selectValue("Extend")
@@ -412,6 +412,7 @@ Item {
                         text: "?"; primary: false; implicitWidth: 32
                         onClicked: virtualOnlyHint.open()
                     }
+                    Item { Layout.fillWidth: true }
                 }
             }
         }

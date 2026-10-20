@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
+import subprocess
 import sys
 import time
 
@@ -78,22 +80,39 @@ def remove_virtual_displays(desktop):
             'settings, then remove the stale recovery record after verifying it.'
         )
 
-    client = MonitorizeVkmsClient()
-    if client.is_available():
+    command = shutil.which('monitorize-vkms')
+    if command:
+        # The CLI also routes reserved remote-login outputs through their owner.
+        # Ordinary remove_all deliberately cannot remove those protected outputs.
         try:
-            status = client.get_status()
-            connected = any(entry.get('connector_connected') for entry in status.get('displays', {}).values())
-            if connected:
-                result = client.remove_all()
-                outcomes = result.get('results', {})
-                removed += sum(bool(item.get('changed')) for item in outcomes.values())
-                for display, item in outcomes.items():
-                    if item.get('error'):
-                        errors.append(f"{display}: {item['error']}")
-                if not result.get('success', False) and not any(item.get('error') for item in outcomes.values()):
-                    errors.append(result.get('message') or 'VKMS displays could not be removed')
-        except Exception as exc:
+            completed = subprocess.run([command, 'remove', '--json'], capture_output=True,
+                                       text=True, timeout=120, check=False)
+            result = json.loads(completed.stdout)
+            if not isinstance(result, dict):raise ValueError('Invalid VKMS cleanup response')
+            removed += int(bool(result.get('removed')))
+            if completed.returncode or not result.get('success', False):
+                details = [str(item['error']) for item in result.get('results', {}).values()
+                           if isinstance(item, dict) and item.get('error')]
+                errors.append('VKMS cleanup failed: ' + ' '.join([str(result.get('message') or 'Removal failed'), *details]))
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             errors.append(f'VKMS cleanup failed: {exc}')
+    else:
+        client = MonitorizeVkmsClient()
+        if client.is_available():
+            try:
+                status = client.get_status()
+                connected = any(entry.get('connector_connected') for entry in status.get('displays', {}).values())
+                if connected:
+                    result = client.remove_all()
+                    outcomes = result.get('results', {})
+                    removed += sum(bool(item.get('changed')) for item in outcomes.values())
+                    for display, item in outcomes.items():
+                        if item.get('error'):
+                            errors.append(f"{display}: {item['error']}")
+                    if not result.get('success', False) and not any(item.get('error') for item in outcomes.values()):
+                        errors.append(result.get('message') or 'VKMS displays could not be removed')
+            except Exception as exc:
+                errors.append(f'VKMS cleanup failed: {exc}')
     if errors:
         return {'success': False, 'message': 'Some virtual displays could not be removed. ' + ' '.join(errors)}
     return {'success': True, 'message': 'Removed virtual displays' if removed else 'No virtual displays found'}

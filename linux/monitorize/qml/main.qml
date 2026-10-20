@@ -79,6 +79,7 @@ Rectangle {
         restoreTokenClearSucceeded = result["success"] === true
         restoreTokenClearMessage = result["message"] || "No restore tokens were found"
         restoreTokenClearToast.open()
+        restoreTokenClearToastTimer.restart()
     }
 
     Theme {
@@ -94,19 +95,27 @@ Rectangle {
             root.stagnantCleanupSucceeded = success
             root.stagnantCleanupMessage = message
             stagnantCleanupToast.open()
+            stagnantCleanupToastTimer.restart()
         }
         function onStreamingStartFailed() {
             if (vkmsReinstallPopup.visible) return
             root.startFailureMessage = "Failed to start stream"
             startFailedToast.open()
+            startFailedToastTimer.restart()
         }
         function onVkmsReinstallRequired() {
             startFailedToast.close()
             vkmsReinstallPopup.open()
         }
+        function onRemoteLoginSetupBlocked(message) {
+            root.startFailureMessage = message
+            startFailedToast.open()
+            startFailedToastTimer.restart()
+        }
         function onStreamingCodecMismatch(message) {
             root.startFailureMessage = message
             startFailedToast.open()
+            startFailedToastTimer.restart()
         }
     }
 
@@ -225,8 +234,8 @@ Rectangle {
         parent: Overlay.overlay
         x: (parent.width - width) / 2
         y: parent.height - height - 28
-        width: 340
-        height: 48
+        width: Math.min(520, parent.width - 32)
+        height: Math.max(48, contentItem.implicitHeight + topPadding + bottomPadding)
         modal: false
         focus: false
         padding: 12
@@ -238,13 +247,14 @@ Rectangle {
         contentItem: Text {
             text: root.startFailureMessage
             color: "white"
+            wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
         onOpened: startFailedToastTimer.restart()
         Timer {
             id: startFailedToastTimer
-            interval: 2800
+            interval: 5000
             onTriggered: startFailedToast.close()
         }
     }
@@ -308,8 +318,8 @@ Rectangle {
         x: (parent.width - width) / 2
         y: parent.height - height - 28
         z: 1000
-        width: 330
-        height: 48
+        width: Math.min(520, parent.width - 32)
+        height: Math.max(48, contentItem.implicitHeight + topPadding + bottomPadding)
         modal: false
         focus: false
         padding: 12
@@ -321,13 +331,14 @@ Rectangle {
         contentItem: Text {
             text: root.stagnantCleanupMessage
             color: "white"
+            wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
         onOpened: stagnantCleanupToastTimer.restart()
         Timer {
             id: stagnantCleanupToastTimer
-            interval: 2800
+            interval: 5000
             onTriggered: stagnantCleanupToast.close()
         }
     }
@@ -338,8 +349,8 @@ Rectangle {
         x: (parent.width - width) / 2
         y: parent.height - height - 28
         z: 1000
-        width: 380
-        height: 48
+        width: Math.min(520, parent.width - 32)
+        height: Math.max(48, contentItem.implicitHeight + topPadding + bottomPadding)
         modal: false
         focus: false
         padding: 12
@@ -351,13 +362,14 @@ Rectangle {
         contentItem: Text {
             text: root.restoreTokenClearMessage
             color: "white"
+            wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
         onOpened: restoreTokenClearToastTimer.restart()
         Timer {
             id: restoreTokenClearToastTimer
-            interval: 3200
+            interval: 5000
             onTriggered: restoreTokenClearToast.close()
         }
     }

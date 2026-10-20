@@ -9,6 +9,11 @@ from monitorize.platform import sunshine_service as service
 
 
 class SunshineRuntimeTest(unittest.TestCase):
+    def setUp(self):
+        # Unit launch tests must not acquire this developer host's enrolled identity.
+        identity=patch.object(service,'_enrolled_manual_identity',return_value=None)
+        identity.start();self.addCleanup(identity.stop)
+
     def test_replacement_refuses_to_launch_when_old_engine_stop_fails(self):
         service._SUNSHINE_SETTINGS_INSTANCES.add(1)
         with patch.object(service,'_enrolled_manual_identity',return_value=None), \
@@ -46,7 +51,7 @@ class SunshineRuntimeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             old, current = Path(tmp) / 'old', Path(tmp) / 'current'
             old.write_bytes(b'old')
-            current.write_bytes(b'MONITORIZE_CONTROL_PROTOCOL=1 MONITORIZE_LAYOUT_RECOVERY=1')
+            current.write_bytes(b'MONITORIZE_CONTROL_PROTOCOL=1 MONITORIZE_LAYOUT_RECOVERY=1 MONITORIZE_CODEC_NEGOTIATION=1')
             with patch('monitorize.desktop.client_display_runtime.get_sunshine_candidates',
                        return_value=[[str(old)], [str(current)]]):
                 self.assertTrue(supports_control_protocol())
@@ -55,7 +60,7 @@ class SunshineRuntimeTest(unittest.TestCase):
     def test_managed_listener_never_falls_back_to_old_engine(self):
         with tempfile.TemporaryDirectory() as tmp:
             current, old = Path(tmp) / "current", Path(tmp) / "old"
-            current.write_bytes(b"ELF-MONITORIZE_CONTROL_PROTOCOL=1")
+            current.write_bytes(b"ELF-MONITORIZE_CONTROL_PROTOCOL=1 MONITORIZE_CODEC_NEGOTIATION=1")
             old.write_bytes(b"ELF-old-engine")
             candidates = [[str(current), "config"], [str(old), "config"]]
             with (patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}),
@@ -65,7 +70,7 @@ class SunshineRuntimeTest(unittest.TestCase):
                   patch.object(service, "set_sunshine_pipewire_node"),
                   patch.object(service, "get_sunshine_config_dir", return_value=tmp),
                   patch.object(service.subprocess, "Popen", side_effect=OSError("test launch failure")) as spawn):
-                for environment in ({"MONITORIZE_CONTROL_SOCKET": "/private/control.sock"}, {"MONITORIZE_REQUIRE_EXACT_OUTPUT": "1"}):
+                for environment in ({"MONITORIZE_CONTROL_SOCKET": "/private/control.sock"}, {"MONITORIZE_REQUIRE_EXACT_OUTPUT": "1"}, {"MONITORIZE_REQUIRE_CODEC_NEGOTIATION": "1"}):
                     spawn.reset_mock()
                     ok, message = service.start_sunshine(extra_environment=environment)
                     self.assertFalse(ok)

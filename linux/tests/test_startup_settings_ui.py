@@ -76,7 +76,8 @@ with tempfile.TemporaryDirectory() as d:
             login_state[0]=True
             backend.remoteLoginSetupFinished.emit({'success':True});settle()
             assert not login_state[0] and not login.property('checked')
-            assert not nested.property('visible')
+            assert nested.property('visible')
+            assert not boot.property('enabled')
             # Disabling just boot preserves login startup.
             page.setProperty('loginAfterBootDisable',1)
             backend.remoteLoginSetupFinished.emit({'success':True});settle()
@@ -86,7 +87,7 @@ with tempfile.TemporaryDirectory() as d:
             backend.remoteLoginSetupFinished.emit({'success':False,'message':'Cancelled'});settle()
             assert not boot.property('checked') and login.property('enabled')
             assert prop('settingsError')=='Cancelled'
-            with patch('monitorize.platform.system_setup.apply_remote_login_setup',return_value={'success':False,'message':'Cancelled'}) as configure:
+            with patch('monitorize.desktop.backend.load_display_settings',return_value={'sunshine_capture':'kms'}), patch('monitorize.platform.system_setup.apply_remote_login_setup',return_value={'success':False,'message':'Cancelled'}) as configure:
                 boot.setProperty('checked',True)
                 e=QQmlExpression(qmlContext(page),page,'bootCheck.clicked()');e.evaluate()
                 assert not e.hasError(),e.error().toString()
@@ -94,6 +95,13 @@ with tempfile.TemporaryDirectory() as d:
                     settle()
                     if not backend.remoteLoginSetupBusy:break
                 configure.assert_called_once_with(True)
+            for capture in ('auto','kwin','x11'):
+                with patch('monitorize.desktop.backend.load_display_settings',return_value={'sunshine_capture':capture}), patch('monitorize.platform.system_setup.apply_remote_login_setup') as configure:
+                    boot.setProperty('checked',True)
+                    backend.configureRemoteLogin(True);settle()
+                    configure.assert_not_called()
+                    assert not boot.property('checked')
+                    assert 'KMS' in view.rootObject().property('startFailureMessage')
             # Transient status failure retries without requesting authorization.
             from monitorize.platform.monitorize_vkms_dbus import VkmsServiceUnavailableError
             client.return_value.get_authorization_state.reset_mock()
