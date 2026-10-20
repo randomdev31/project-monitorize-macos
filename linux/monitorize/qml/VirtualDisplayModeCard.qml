@@ -16,6 +16,9 @@ Rectangle {
     property bool canRemove: false
     property bool vkmsSelected: false
     property bool sunshineEnabled: true
+    property bool clientSettingsAvailable: true
+    readonly property bool clientRequested: clientSettingsAvailable
+        && !!(displayConfig && displayConfig.use_client_display_settings)
     property var nativeResolutionOptions: []
     property var vkmsResolutionOptions: []
     property bool syncing: false
@@ -32,7 +35,7 @@ Rectangle {
     readonly property var resolutionOptions: vkmsSelected
         ? vkmsResolutionOptions : nativeResolutionOptions
     readonly property bool customSelected: resolution.currentText === "Custom..."
-    readonly property bool customInputsVisible: customSelected
+    readonly property bool customInputsVisible: customSelected && !clientRequested
 
     function refreshLabel(value) {
         return String(value || "60") + " Hz"
@@ -135,6 +138,39 @@ Rectangle {
             }
         }
 
+        RowLayout {
+            Layout.fillWidth: true
+            CustomCheckBox {
+                text: "Use client display settings"
+                checked: !!(card.displayConfig && card.displayConfig.use_client_display_settings)
+                enabled: card.clientSettingsAvailable && card.sunshineEnabled
+                Layout.fillWidth: true
+                onClicked: card.commit({use_client_display_settings: checked})
+            }
+            ToolButton {
+                id: clientInfo
+                text: "ⓘ"
+                Accessible.name: "About client display settings"
+                property string helpText: "Create this display when Moonlight or Artemis starts streaming.\nUse the client's selected resolution and frame rate."
+                ToolTip.visible: hovered
+                ToolTip.text: helpText
+                onClicked: clientHelp.open()
+                Popup {
+                    id: clientHelp
+                    width: Math.min(360, card.width - 32)
+                    x: Math.min(0, clientInfo.width - width)
+                    y: clientInfo.height
+                    padding: 12
+                    contentItem: Text {
+                        text: clientInfo.helpText
+                        color: theme.textPrimary
+                        wrapMode: Text.WordWrap
+                    }
+                    background: Rectangle { color: theme.surface; border.color: theme.border; radius: theme.controlRadius }
+                }
+            }
+        }
+
         GridLayout {
             Layout.fillWidth: true
             columns: 2
@@ -151,7 +187,9 @@ Rectangle {
                 id: resolution
                 Layout.fillWidth: true
                 model: card.resolutionOptions
-                displayText: currentIndex < 0 ? "Select an available mode" : currentText
+                enabled: !card.clientRequested
+                displayText: card.clientRequested ? "Requested by client"
+                    : (currentIndex < 0 ? "Select an available mode" : currentText)
                 onActivated: {
                     if (card.syncing) return
                     refresh.selectValue("60 Hz", true)
@@ -162,9 +200,10 @@ Rectangle {
                 id: refresh
                 Layout.fillWidth: true
                 model: ["30 Hz", "60 Hz", "75 Hz", "90 Hz", "120 Hz", "144 Hz", "Custom..."]
-                enabled: count > 0
+                enabled: count > 0 && !card.clientRequested
                 opacity: enabled ? 1 : 0.45
-                displayText: currentIndex < 0 ? "Select an available rate" : currentText
+                displayText: card.clientRequested ? "Requested by client"
+                    : (currentIndex < 0 ? "Select an available rate" : currentText)
                 onActivated: card.commitCurrentMode()
             }
             RowLayout {
@@ -186,7 +225,7 @@ Rectangle {
             }
             CustomTextField {
                 id: customRefresh
-                visible: refresh.currentText === "Custom..."
+                visible: refresh.currentText === "Custom..." && !card.clientRequested
                 Layout.fillWidth: true
                 placeholderText: "24–240"; maximumLength: 3
                 onEditingFinished: card.commitCurrentMode()

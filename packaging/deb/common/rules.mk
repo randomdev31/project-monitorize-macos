@@ -24,6 +24,7 @@ endif
 	dh $@ --with python3 --buildsystem=pybuild
 
 override_dh_auto_build:
+	python3 packaging/common/check-client-display-protocol.py external/sunshine
 	dh_auto_build
 	patch --batch --forward -d external/sunshine -p1 < packaging/sunshine-strict-selection.patch
 	CC=$(SUNSHINE_CC) \
@@ -71,6 +72,7 @@ override_dh_auto_install:
 		debian/monitorize/usr/bin/monitorize
 	install -Dpm 0755 sunshine-build/sunshine \
 		debian/monitorize/usr/libexec/monitorize/sunshine
+	python3 packaging/remote-login/install-assets.py --destdir debian/monitorize
 	install -Dpm 0755 packaging/common/monitorize-system-setup \
 		debian/monitorize/usr/libexec/monitorize/monitorize-system-setup
 	install -dpm 0755 debian/monitorize/usr/share/monitorize/sunshine/assets

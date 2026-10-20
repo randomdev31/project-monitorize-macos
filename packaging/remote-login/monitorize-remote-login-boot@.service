@@ -1,0 +1,18 @@
+[Unit]
+Description=Monitorize boot streaming engine for account %i
+Requires=monitorize-remote-login.service
+After=monitorize-remote-login.service systemd-logind.service
+PartOf=monitorize-remote-login.service
+ConditionPathExists=/etc/monitorize/remote-login.json
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/bin/python3 -I /usr/libexec/monitorize/remote-login/entry.py boot
+Restart=no
+KillMode=control-group
+TimeoutStopSec=12
+UMask=0077
+CapabilityBoundingSet=CAP_SYS_ADMIN
+# Required for the root-installed Sunshine file capability, not the Python GUI.
+NoNewPrivileges=no

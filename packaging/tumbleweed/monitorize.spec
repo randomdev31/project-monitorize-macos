@@ -118,6 +118,7 @@ custom resolutions use the separately packaged helper suggested by this RPM.
 
 %prep
 %autosetup
+python3 packaging/common/check-client-display-protocol.py external/sunshine
 patch --batch --forward -d external/sunshine -p1 < packaging/sunshine-strict-selection.patch
 mkdir .ffmpeg-prepared
 tar -xzf %{SOURCE1} -C .ffmpeg-prepared --strip-components=1 --no-same-owner
@@ -208,6 +209,7 @@ grep -q 'src/platform/linux/cuda.cu' sunshine-build/compile_commands.json
 %endif
 
 %install
+python3 packaging/remote-login/install-assets.py --destdir %{buildroot}
 install -d %{buildroot}%{python3_sitelib}
 cp -a linux/monitorize %{buildroot}%{python3_sitelib}/
 install -Dpm 0755 monitorize-kde-virtual-output \
@@ -298,6 +300,14 @@ PYTHON
 %{_bindir}/monitorize-kde-virtual-output
 %caps(cap_sys_admin,cap_sys_nice+p) %{_libexecdir}/monitorize/sunshine
 %{_libexecdir}/monitorize/monitorize-system-setup
+%{_libexecdir}/monitorize/remote-login/
+%{_prefix}/lib/monitorize-remote-login/
+%{_unitdir}/monitorize-remote-login.service
+%{_unitdir}/monitorize-remote-login-boot@.service
+%{_unitdir}/monitorize-remote-login-desktop@.service
+%{_unitdir}/monitorize-vkms-boot-display.service
+%{_datadir}/monitorize/remote-login/
+%{_datadir}/dbus-1/system.d/io.github.vinnavannewton.MonitorizeRemoteLogin1.conf
 %dir %{_datadir}/monitorize
 %dir %{_datadir}/monitorize/sunshine
 %{_datadir}/monitorize/sunshine/assets/

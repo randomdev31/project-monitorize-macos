@@ -1,0 +1,72 @@
+"""Bounded engine readiness evidence scoped to the current boot and unit PID."""
+import json
+import os
+from pathlib import Path
+import stat
+import time
+
+
+def inspect_startup(log,offset,output):
+    try:
+        with Path(log).open('rb') as source:
+            source.seek(offset);lines=source.read(131072).decode('utf-8','replace').splitlines()
+        failed=any('MONITORIZE_STRICT_' in line for line in lines)
+        listening=any('Configuration UI available' in line for line in lines)
+        encoded=any('Found H.264 encoder:' in line for line in lines)
+        targeted=any((f"Mapped '{output}'" in line or f'Streaming display: {output} ' in line) for line in lines)
+        return dict(listening=listening and not failed,capture_ready=listening and encoded and targeted and not failed)
+    except OSError:return dict(listening=False,capture_ready=False)
+
+
+def write_health(path,values):
+    path=Path(path);temporary=path.with_suffix('.tmp')
+    fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW,0o600)
+    try:
+        info=os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.geteuid() or info.st_nlink!=1:raise ValueError('Unsafe health file.')
+        os.ftruncate(fd,0);os.fchmod(fd,0o600)
+        with os.fdopen(fd,'w') as stream:
+            fd=None;json.dump(values,stream)
+        os.replace(temporary,path)
+    finally:
+        if fd is not None:os.close(fd)
+
+
+def read_health(path,*,uid,pid,boot_id,now=None):
+    try:
+        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        with os.fdopen(fd) as source:
+            info=os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=uid or info.st_mode & 0o077 or info.st_size>4096:return {}
+            values=json.load(source)
+        now=time.monotonic() if now is None else now
+        if (type(values.get('pid')) is not int or values['pid']!=pid or values.get('boot_id')!=boot_id or
+            type(values.get('time')) not in (int,float) or not 0<=now-values['time']<3):return {}
+        return values
+    except (OSError,ValueError,TypeError):return {}
+
+
+def rotate_startup_log(path):
+    """Only while holding identity lock and before the successor engine starts."""
+    path=Path(path)
+    try:info=path.lstat()
+    except FileNotFoundError:return
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.geteuid() or info.st_nlink!=1:
+        raise ValueError('Unsafe managed startup log.')
+    os.replace(path,path.with_suffix(path.suffix+'.previous'))
+
+
+class ListenerEvidence:
+    """Incremental bounded startup scan; readiness belongs to one engine process."""
+    def __init__(self):
+        self.offset=0;self.pending=b'';self.listening=False
+    def read(self,path):
+        try:
+            with Path(path).open('rb') as source:
+                source.seek(self.offset);chunk=source.read(131072)
+            self.offset+=len(chunk)
+            lines=(self.pending+chunk).split(b'\n')
+            self.pending=lines.pop()[-4096:]
+            if any(b'Configuration UI available' in line for line in lines):self.listening=True
+        except OSError:pass
+        return self.listening

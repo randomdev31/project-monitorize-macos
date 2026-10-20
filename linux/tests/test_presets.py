@@ -13,7 +13,7 @@ class PresetTest(unittest.TestCase):
             streaming=True, primary_ready=False, third_ready=False,
             pending_options={"second": {"enabled": True}},
         )
-        backend = SimpleNamespace(streaming=controller, session=SimpleNamespace(busy=True))
+        backend = SimpleNamespace(streaming=controller, session=SimpleNamespace(busy=True, client_runtime=None))
         can_save = MonitorizeBackend.canSavePreset.fget
         self.assertFalse(can_save(backend))
         controller.primary_ready = True
@@ -33,6 +33,7 @@ class PresetTest(unittest.TestCase):
         }))
         backend = SimpleNamespace(
             canSavePreset=False, streaming=controller, _presets=[original],
+            session=SimpleNamespace(client_runtime=None),
             presetsChanged=SimpleNamespace(emit=Mock()),
         )
         save = MonitorizeBackend.saveCurrentPreset

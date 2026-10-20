@@ -1,0 +1,132 @@
+"""Isolated Settings UI tests; no live setup, service, or display operations."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import unittest
+
+PROGRAM = r'''
+import os,tempfile
+from unittest.mock import patch
+from PyQt6.QtCore import QObject,QUrl,QEventLoop,QTimer
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtQml import QQmlExpression,qmlContext
+from PyQt6.QtQuickWidgets import QQuickWidget
+from monitorize.desktop.backend import MonitorizeBackend
+app=QApplication([])
+def settle():
+    loop=QEventLoop();QTimer.singleShot(100,loop.quit);loop.exec()
+with tempfile.TemporaryDirectory() as d:
+    os.environ['XDG_CONFIG_HOME']=d
+    with patch('monitorize.desktop.remote_login_runtime.SETTINGS',__import__('pathlib').Path(d)/'absent'), \
+         patch('monitorize.desktop.backend.get_local_ip',return_value='192.0.2.1'), \
+         patch('monitorize.desktop.backend.find_sunshine_command',return_value=None), \
+         patch('monitorize.desktop.backend.get_system_setup_status',return_value={'available':False}), \
+         patch('monitorize.desktop.backend.load_general_settings',return_value={'system_setup_decided':True}), \
+         patch('monitorize.desktop.backend.MonitorizeVkmsClient') as client, \
+         patch('monitorize.platform.system_setup.remote_login_setup_status') as status:
+        status.return_value={'available':True,'enabled':False,'supported':True}
+        client.return_value.get_authorization_state.return_value={'success':True,'unattended_enabled':True}
+        login_state=[False]
+        def set_login(enabled):login_state[0]=enabled;return ''
+        login_read=patch('monitorize.desktop.backend.autostart.is_enabled',side_effect=lambda:login_state[0]);login_read.start()
+        login_write=patch('monitorize.desktop.backend.autostart.set_enabled',side_effect=set_login);login_write.start()
+        backend=MonitorizeBackend('sway');view=QQuickWidget()
+        view.rootContext().setContextProperty('backend',backend)
+        try:
+            view.setSource(QUrl.fromLocalFile(str(__import__('pathlib').Path('linux/monitorize/qml/main.qml').resolve())))
+            def evaluate(code):
+                e=QQmlExpression(view.rootContext(),view.rootObject(),code)
+                value=e.evaluate();assert not e.hasError(),e.error().toString();return value
+            settle();evaluate('navigate("SettingsPage.qml")');settle();settle()
+            assert view.status()==QQuickWidget.Status.Ready
+            page=view.rootObject().findChild(QObject,'startupSettingsPage');assert page
+            def prop(code):
+                e=QQmlExpression(view.rootContext(),page,code);value=e.evaluate();assert not e.hasError(),e.error().toString();return value[0]
+            assert prop('vkmsAuthorization.success')
+            assert not prop('vkmsChecking')
+            backend.vkmsAuthorizationReady.emit({'success':False,'message':'Unavailable fixture'});settle()
+            assert not prop('vkmsAuthorization.success')
+            assert not prop('vkmsAuthorization.unattended_enabled === false')
+            status.return_value={'available':True,'enabled':True,'supported':True}
+            backend.remoteLoginSetupFinished.emit({'success':True,'message':'Reboot after setup.'});settle()
+            assert prop('bootStatus.enabled')
+            login=page.findChild(QObject,'loginStartupCheck')
+            boot=page.findChild(QObject,'bootStartupCheck')
+            assert login.property('checked') and login.property('enabled')
+            assert boot.property('checked')
+            nested=page.findChild(QObject,'bootStartupOptions')
+            assert not nested.property('visible')
+            e=QQmlExpression(qmlContext(page),page,'bootOptionsExpanded = true');e.evaluate();settle()
+            assert nested.property('visible')
+            # Cancelling parent disable keeps both options selected.
+            with patch('monitorize.platform.system_setup.apply_remote_login_setup',return_value={'success':False,'message':'Cancelled'}) as disable:
+                login.setProperty('checked',False)
+                e=QQmlExpression(qmlContext(page),page,'autostartCheck.clicked()');e.evaluate()
+                assert not e.hasError(),e.error().toString()
+                for _ in range(10):
+                    settle()
+                    if not backend.remoteLoginSetupBusy:break
+                disable.assert_called_once_with(False)
+                assert login.property('checked') and boot.property('checked')
+                assert not login_state[0]
+            # Successful parent disable clears login only after boot is disabled.
+            page.setProperty('loginAfterBootDisable',0)
+            status.return_value={'available':True,'enabled':False,'supported':True}
+            login_state[0]=True
+            backend.remoteLoginSetupFinished.emit({'success':True});settle()
+            assert not login_state[0] and not login.property('checked')
+            assert not nested.property('visible')
+            # Disabling just boot preserves login startup.
+            page.setProperty('loginAfterBootDisable',1)
+            backend.remoteLoginSetupFinished.emit({'success':True});settle()
+            assert login_state[0] and login.property('checked') and nested.property('visible')
+            # Failed/cancelled authorization restores actual enrollment state.
+            status.return_value={'available':True,'enabled':False,'supported':True}
+            backend.remoteLoginSetupFinished.emit({'success':False,'message':'Cancelled'});settle()
+            assert not boot.property('checked') and login.property('enabled')
+            assert prop('settingsError')=='Cancelled'
+            with patch('monitorize.platform.system_setup.apply_remote_login_setup',return_value={'success':False,'message':'Cancelled'}) as configure:
+                boot.setProperty('checked',True)
+                e=QQmlExpression(qmlContext(page),page,'bootCheck.clicked()');e.evaluate()
+                assert not e.hasError(),e.error().toString()
+                for _ in range(10):
+                    settle()
+                    if not backend.remoteLoginSetupBusy:break
+                configure.assert_called_once_with(True)
+            # Transient status failure retries without requesting authorization.
+            from monitorize.platform.monitorize_vkms_dbus import VkmsServiceUnavailableError
+            client.return_value.get_authorization_state.reset_mock()
+            client.return_value.get_authorization_state.side_effect=[
+                VkmsServiceUnavailableError('Service starting'),
+                {'success':True,'unattended_enabled':True}]
+            backend.refreshVkmsAuthorization()
+            for _ in range(15):
+                settle()
+                if not backend._vkms_authorization_busy:break
+            assert prop('vkmsAuthorization.unattended_enabled')
+            assert client.return_value.get_authorization_state.call_count==2
+            assert client.return_value.close.called
+            client.return_value.get_authorization_state.side_effect=VkmsServiceUnavailableError('Still unavailable')
+            backend.refreshVkmsAuthorization()
+            for _ in range(25):
+                settle()
+                if not backend._vkms_authorization_busy:break
+            assert not prop('vkmsAuthorization.success')
+            assert not prop('vkmsAuthorization.unattended_enabled === false')
+            client.return_value.get_authorization_state.side_effect=None
+            client.return_value.get_authorization_state.return_value={'success':True,'unattended_enabled':False}
+            backend.refreshVkmsAuthorization();settle()
+            assert prop('vkmsAuthorization.success') and not prop('vkmsAuthorization.unattended_enabled')
+            print('Settings startup and authorization states passed')
+        finally:
+            view.setSource(QUrl());view.close();backend.close();app.processEvents()
+            login_read.stop();login_write.stop()
+'''
+
+class StartupSettingsTests(unittest.TestCase):
+    def test_settings_states(self):
+        result=subprocess.run([sys.executable,'-c',PROGRAM],cwd=Path(__file__).resolve().parents[2],
+            env=dict(os.environ,QT_QPA_PLATFORM='offscreen',QT_QUICK_BACKEND='software',PYTHONDONTWRITEBYTECODE='1'),
+            capture_output=True,text=True,timeout=20)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)

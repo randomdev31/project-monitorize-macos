@@ -16,6 +16,7 @@ Rectangle {
     property string restoreTokenClearMessage: ""
     property string startFailureMessage: "Failed to start stream"
     readonly property bool showGlobalBack: stack.depth > 1 && !backend.isStreaming
+        && stack.currentItem !== null && stack.currentItem.objectName !== "bootWifiSetupPage"
     property string selectedPage: "DisplaySetupPage.qml"
     property string highlightedPage: "DisplaySetupPage.qml"
     property bool navHighlightFading: false
@@ -86,18 +87,13 @@ Rectangle {
 
     color: theme.background
 
-    // --- Navigate between pages when streaming state changes ---
+    // Session updates must not override the page selected by the user.
     Connections {
         target: backend
         function onVirtualDisplayCleanupFinished(success, message) {
             root.stagnantCleanupSucceeded = success
             root.stagnantCleanupMessage = message
             stagnantCleanupToast.open()
-        }
-        function onIsStreamingChanged(streaming) {
-            if (streaming) {
-                if (root.selectedPage !== "StreamingPage.qml") root.navigate("StreamingPage.qml")
-            }
         }
         function onStreamingStartFailed() {
             if (vkmsReinstallPopup.visible) return

@@ -6,9 +6,50 @@ import sys
 from PyQt6.QtCore import QProcess
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
 from monitorize.config.settings import load_presets
 from monitorize.platform.utils import ASSETS_DIR, LINUX_DIR
+
+TRAY_SERVER = 'monitorize-tray-agent'
+
+
+def dismiss_tray_agent():
+    """Transfer tray ownership to the full app without touching its session."""
+    socket = QLocalSocket()
+    socket.connectToServer(TRAY_SERVER)
+    if socket.waitForConnected(250):
+        socket.write(b'quit')
+        socket.waitForBytesWritten(250)
+        return True
+    return False
+
+
+def _claim_tray(app):
+    socket = QLocalSocket()
+    socket.connectToServer(TRAY_SERVER)
+    if socket.waitForConnected(250):
+        return None
+    QLocalServer.removeServer(TRAY_SERVER)
+    server = QLocalServer(app)
+    server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
+    if not server.listen(TRAY_SERVER):
+        return None
+
+    def accept():
+        while server.hasPendingConnections():
+            peer = server.nextPendingConnection()
+
+            def read(peer=peer):
+                if bytes(peer.readAll()) == b'quit':
+                    app.quit()
+
+            peer.readyRead.connect(read)
+            peer.disconnected.connect(peer.deleteLater)
+            read()
+
+    server.newConnection.connect(accept)
+    return server
 
 
 def _start_full_app(args=None):
@@ -55,7 +96,7 @@ class TrayAgent:
         self.tray.show()
 
     def show_app(self):
-        self._launch_and_quit([])
+        self._launch_and_quit(['--restore-from-tray'])
 
     def launch_preset(self, index):
         self._launch_and_quit([
@@ -81,6 +122,9 @@ def main():
     app.setApplicationName("Monitorize")
     app.setDesktopFileName("monitorize")
     QApplication.setQuitOnLastWindowClosed(False)
+    server = _claim_tray(app)
+    if server is None:
+        return
     if not QSystemTrayIcon.isSystemTrayAvailable():
         _start_full_app([])
         return

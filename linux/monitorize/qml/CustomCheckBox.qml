@@ -4,6 +4,7 @@ import QtQuick.Controls
 CheckBox {
     id: chk
     hoverEnabled: true
+    property bool keepCheckedBlue: false
 
     indicator: Rectangle {
         implicitWidth: 16
@@ -11,10 +12,10 @@ CheckBox {
         x: chk.leftPadding
         y: parent.height / 2 - height / 2
         radius: 4
-        color: !chk.enabled ? theme.surfaceAlt : chk.checked
+        color: chk.keepCheckedBlue && chk.checked ? theme.buttonBackground : !chk.enabled ? theme.surfaceAlt : chk.checked
             ? (chk.hovered || chk.down ? theme.buttonBackgroundHover : theme.buttonBackground)
             : (chk.hovered || chk.down ? theme.surfaceAlt : theme.surface)
-        border.color: !chk.enabled ? theme.border : chk.checked
+        border.color: chk.keepCheckedBlue && chk.checked ? theme.buttonBackground : !chk.enabled ? theme.border : chk.checked
             ? (chk.hovered || chk.down ? theme.buttonBackgroundHover : theme.buttonBackground)
             : (chk.hovered || chk.down ? theme.borderHover : theme.border)
         border.width: 1

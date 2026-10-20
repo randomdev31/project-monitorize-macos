@@ -9,6 +9,69 @@ from monitorize.platform import sunshine_service as service
 
 
 class SunshineRuntimeTest(unittest.TestCase):
+    def test_replacement_refuses_to_launch_when_old_engine_stop_fails(self):
+        service._SUNSHINE_SETTINGS_INSTANCES.add(1)
+        with patch.object(service,'_enrolled_manual_identity',return_value=None), \
+             patch.object(service,'is_sunshine_running',return_value=True), \
+             patch.object(service,'stop_sunshine',return_value=(False,'Old engine still alive')), \
+             patch.object(service.subprocess,'Popen') as spawn:
+            self.assertEqual(service.start_sunshine(),(False,'Old engine still alive'))
+            spawn.assert_not_called()
+
+    def test_unconfirmed_stop_retains_process_for_retry_exit_barrier(self):
+        proc=MagicMock();proc.poll.return_value=None
+        proc.terminate.side_effect=PermissionError('fixture')
+        with patch.dict(service._SUNSHINE_PROCESSES,{1:proc},clear=True), \
+             patch.dict(service._SUNSHINE_ENGINE_OWNERS,{},clear=True), \
+             patch.object(service,'_SUNSHINE_PROCESS',proc), \
+             patch.object(service,'set_sunshine_pipewire_node') as clear_node, \
+             patch.object(service,'clear_sunshine_output_name') as clear_output:
+            result=service.stop_sunshine(1)
+            self.assertFalse(result[0])
+            self.assertTrue(service.is_sunshine_running(1))
+            self.assertIs(service._SUNSHINE_PROCESSES[1],proc)
+            clear_node.assert_not_called();clear_output.assert_not_called()
+            import subprocess
+            proc.terminate.side_effect=None
+            proc.wait.side_effect=subprocess.TimeoutExpired('sunshine',2)
+            proc.kill.side_effect=PermissionError('fixture')
+            self.assertFalse(service.stop_sunshine(1)[0])
+            self.assertTrue(service.is_sunshine_running(1))
+            proc.poll.return_value=0
+            self.assertTrue(service.stop_sunshine(1)[0])
+            self.assertFalse(service.is_sunshine_running(1))
+
+    def test_listener_capability_check_finds_compatible_bundled_fallback(self):
+        from monitorize.desktop.client_display_runtime import supports_control_protocol
+        with tempfile.TemporaryDirectory() as tmp:
+            old, current = Path(tmp) / 'old', Path(tmp) / 'current'
+            old.write_bytes(b'old')
+            current.write_bytes(b'MONITORIZE_CONTROL_PROTOCOL=1 MONITORIZE_LAYOUT_RECOVERY=1')
+            with patch('monitorize.desktop.client_display_runtime.get_sunshine_candidates',
+                       return_value=[[str(old)], [str(current)]]):
+                self.assertTrue(supports_control_protocol())
+                self.assertTrue(supports_control_protocol(marker=b'MONITORIZE_LAYOUT_RECOVERY=1'))
+
+    def test_managed_listener_never_falls_back_to_old_engine(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            current, old = Path(tmp) / "current", Path(tmp) / "old"
+            current.write_bytes(b"ELF-MONITORIZE_CONTROL_PROTOCOL=1")
+            old.write_bytes(b"ELF-old-engine")
+            candidates = [[str(current), "config"], [str(old), "config"]]
+            with (patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}),
+                  patch.object(service, "is_sunshine_running", return_value=False),
+                  patch.object(service, "get_sunshine_candidates", return_value=candidates),
+                  patch.object(service, "ensure_sunshine_tray_disabled"),
+                  patch.object(service, "set_sunshine_pipewire_node"),
+                  patch.object(service, "get_sunshine_config_dir", return_value=tmp),
+                  patch.object(service.subprocess, "Popen", side_effect=OSError("test launch failure")) as spawn):
+                for environment in ({"MONITORIZE_CONTROL_SOCKET": "/private/control.sock"}, {"MONITORIZE_REQUIRE_EXACT_OUTPUT": "1"}):
+                    spawn.reset_mock()
+                    ok, message = service.start_sunshine(extra_environment=environment)
+                    self.assertFalse(ok)
+                    self.assertEqual([call.args[0][0] for call in spawn.call_args_list], [str(current)])
+                    self.assertNotIn(str(old), message)
+
     def test_nix_sunshine_requires_binary_and_assets_from_same_store_output(self):
         binary = "/nix/store/abc-monitorize-sunshine/bin/sunshine"
         assets = "/nix/store/abc-monitorize-sunshine/assets"
@@ -141,6 +204,10 @@ class SunshineRuntimeTest(unittest.TestCase):
     def test_settings_launch_is_local_and_normal_start_replaces_it(self):
         settings_process = MagicMock()
         settings_process.poll.return_value = None
+        def exited(*args,**kwargs):
+            settings_process.poll.return_value=0
+            return 0
+        settings_process.wait.side_effect=exited
         normal_process = MagicMock()
         normal_process.poll.return_value = None
         with (
@@ -350,7 +417,7 @@ class SunshineRuntimeTest(unittest.TestCase):
             patch.object(service, "ensure_sunshine_tray_disabled"),
             patch.object(service, "is_sunshine_running", return_value=True),
             patch("builtins.open", mock_open(read_data=b"SUNSHINE_PIPEWIRE_NODE=42\0")),
-            patch.object(service, "stop_sunshine") as stop,
+            patch.object(service, "stop_sunshine", return_value=(True, "Stopped")) as stop,
             patch.object(service, "get_sunshine_config_dir", return_value="/tmp/config"),
             patch.object(service, "get_sunshine_candidates", return_value=[["/tmp/sunshine", "/tmp/config/sunshine.conf"]]),
             patch.object(service, "get_sunshine_assets_dir", return_value=None),
@@ -374,7 +441,7 @@ class SunshineRuntimeTest(unittest.TestCase):
             patch.object(service, "ensure_sunshine_tray_disabled"),
             patch.object(service, "is_sunshine_running", return_value=True),
             patch("builtins.open", mock_open(read_data=b"SUNSHINE_PIPEWIRE_NODE=42\0")),
-            patch.object(service, "stop_sunshine") as stop,
+            patch.object(service, "stop_sunshine", return_value=(True, "Stopped")) as stop,
             patch.object(service, "get_sunshine_config_dir", return_value="/tmp/config"),
             patch.object(service, "get_sunshine_candidates", return_value=[["/tmp/sunshine", "/tmp/config/sunshine.conf"]]),
             patch.object(service, "get_sunshine_assets_dir", return_value=None),
@@ -391,7 +458,7 @@ class SunshineRuntimeTest(unittest.TestCase):
         with (
             patch.object(service, "ensure_sunshine_tray_disabled"),
             patch.object(service, "is_sunshine_running", return_value=True),
-            patch.object(service, "stop_sunshine") as stop,
+            patch.object(service, "stop_sunshine", return_value=(True, "Stopped")) as stop,
             patch.object(service.subprocess, "Popen") as popen,
         ):
             ok, _ = service.start_sunshine(pipewire_node=84)

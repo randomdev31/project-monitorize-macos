@@ -118,7 +118,10 @@ def run_vkms_headless(
         print("[VKMS] Using host monitorize-vkms service", flush=True)
         print(f"[VKMS] Requesting display: {width}x{height}@{fps}", flush=True)
 
-        result = vkms_client.create_display(width, height, fps, display=VKMS_SLOTS[slot])
+        options = {'display': VKMS_SLOTS[slot]}
+        if os.environ.get('MONITORIZE_VKMS_UNATTENDED') == '1':
+            options['unattended'] = True
+        result = vkms_client.create_display(width, height, fps, **options)
         if result["created"] is not True:
             raise MonitorizeVkmsError(f"{VKMS_SLOTS[slot]} already belongs to an existing holder. Stop its owning session first.")
         output_name = result["name"]

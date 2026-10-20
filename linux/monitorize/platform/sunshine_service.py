@@ -22,6 +22,7 @@ PR_SET_PDEATHSIG = 1
 _SUNSHINE_PROCESS: subprocess.Popen | None = None
 _SUNSHINE_PROCESSES: dict[int, subprocess.Popen] = {}
 _SUNSHINE_SETTINGS_INSTANCES: set[int] = set()
+_SUNSHINE_ENGINE_OWNERS: dict[int, object] = {}
 _SUNSHINE_PREVIOUS_LOG_HEADERS: dict[int, str] = {}
 
 
@@ -409,6 +410,20 @@ def get_sunshine_assets_dir(command: str = "") -> str | None:
                  if binary == command and os.path.isdir(assets)), None)
 
 
+def sunshine_supports_client_display_protocol(binary: str, marker=b"MONITORIZE_CONTROL_PROTOCOL=1") -> bool:
+    """Check the actual candidate before allowing a deferred-display listener."""
+    try:
+        with open(binary, "rb") as source:
+            previous = b""
+            while chunk := source.read(1024 * 1024):
+                if marker in previous + chunk:
+                    return True
+                previous = chunk[-len(marker):]
+    except OSError:
+        pass
+    return False
+
+
 def find_sunshine_command(instance: int = 1) -> list[str] | None:
     """Find the first available command to start Sunshine."""
     candidates = get_sunshine_candidates(instance)
@@ -578,6 +593,23 @@ def get_sunshine_pipewire_node(instance: int = 1) -> int | None:
     return _SUNSHINE_PIPEWIRE_NODES.get(instance)
 
 
+
+def _enrolled_manual_identity(instance):
+    if instance != 1:
+        return None
+    from monitorize.remote_login.settings import SETTINGS, read_settings
+    if not SETTINGS.exists():
+        return None
+    settings = read_settings()
+    if settings.uid != os.getuid():
+        return None
+    if settings.enabled:
+        raise RuntimeError("Remote login owns instance 1. Use the Session page to start or stop it.")
+    from monitorize.platform.remote_login_identity import identity_paths
+    # Disabling boot access does not resurrect the pre-enrollment pairing copy.
+    return identity_paths(settings.directory)
+
+
 def start_sunshine(
     instance: int = 1,
     pipewire_node: int | str | None = None,
@@ -587,6 +619,7 @@ def start_sunshine(
     height: int | None = None,
     extra_environment: dict[str, str] | None = None,
     settings_only: bool = False,
+    managed_identity=None,
 ) -> tuple[bool, str]:
     """Start a managed engine, optionally restricted to loopback for settings.
 
@@ -595,12 +628,31 @@ def start_sunshine(
     running session without interrupting it.
     """
     global _SUNSHINE_PROCESS, _SUNSHINE_PROCESSES
+    if managed_identity is None:
+        try:
+            managed_identity = _enrolled_manual_identity(instance)
+        except (ValueError, RuntimeError) as error:
+            return False, str(error)
+    if managed_identity is not None and instance != 1:
+        return False, "Remote login identity belongs to instance 1 only."
+    existing_owner = _SUNSHINE_ENGINE_OWNERS.get(instance)
+    if existing_owner is not None and not existing_owner.running:
+        existing_owner.reap()
+        _SUNSHINE_ENGINE_OWNERS.pop(instance, None)
+        existing_owner = None
+    if existing_owner is not None and managed_identity is None:
+        return False, "Managed identity ownership must be retained until the engine stops."
+    if (managed_identity is not None and is_sunshine_running(instance)
+            and (existing_owner is None or existing_owner.paths != managed_identity)):
+        return False, "Stop the existing engine before changing identity ownership."
     if is_sunshine_running(instance):
         if settings_only:
             # Opening settings must never interrupt an active streaming instance.
             return True, f"Sunshine instance {instance} is already running."
         if instance in _SUNSHINE_SETTINGS_INSTANCES:
-            stop_sunshine(instance, clear_output_name=False)
+            stopped = stop_sunshine(instance, clear_output_name=False)
+            if not stopped[0]:
+                return stopped
     ensure_sunshine_tray_disabled(instance)
     set_sunshine_pipewire_node(
         pipewire_node,
@@ -633,11 +685,22 @@ def start_sunshine(
             except OSError:
                 needs_restart = True
         if needs_restart:
-            stop_sunshine(instance, clear_pipewire_node=False)
+            stopped = stop_sunshine(instance, clear_pipewire_node=False)
+            if not stopped[0]:
+                return stopped
         else:
             return True, f"Sunshine instance {instance} is already running."
 
     candidates = get_sunshine_candidates(instance)
+    if ((extra_environment or {}).get("MONITORIZE_CONTROL_SOCKET")
+            or (extra_environment or {}).get("MONITORIZE_REQUIRE_EXACT_OUTPUT") == "1"):
+        candidates = [cmd for cmd in candidates if sunshine_supports_client_display_protocol(cmd[0])]
+        if not candidates:
+            return False, "Rebuild or install Monitorize Sunshine with client display protocol v1."
+    if (extra_environment or {}).get('MONITORIZE_REQUIRE_LAYOUT_RECOVERY') == '1':
+        candidates = [cmd for cmd in candidates if sunshine_supports_client_display_protocol(cmd[0], b'MONITORIZE_LAYOUT_RECOVERY=1')]
+        if not candidates:
+            return False, 'Rebuild or install Monitorize Sunshine with layout recovery protocol v1.'
     if not candidates:
         return False, "Sunshine not found. Please verify Monitorize Sunshine is built or installed."
 
@@ -688,13 +751,22 @@ def start_sunshine(
                 _SUNSHINE_PREVIOUS_LOG_HEADERS[instance] = headers[-1] if headers else ""
             except OSError:
                 _SUNSHINE_PREVIOUS_LOG_HEADERS.pop(instance, None)
-            proc = subprocess.Popen(
-                cmd,
-                env=candidate_env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                preexec_fn=_set_pdeathsig,
-            )
+            if managed_identity is not None:
+                from monitorize.remote_login.engine import EngineOwner
+                owner = EngineOwner(managed_identity)
+                managed_cmd = [*cmd, *(key + "=" + value for key, value in
+                                      managed_identity.config_overrides().items())]
+                owner.start(managed_cmd, candidate_env)
+                proc = owner.process
+                _SUNSHINE_ENGINE_OWNERS[instance] = owner
+            else:
+                proc = subprocess.Popen(
+                    cmd,
+                    env=candidate_env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    preexec_fn=_set_pdeathsig,
+                )
             _SUNSHINE_PROCESSES[instance] = proc
             if settings_only:
                 _SUNSHINE_SETTINGS_INSTANCES.add(instance)
@@ -705,6 +777,9 @@ def start_sunshine(
             time.sleep(0.35)
             exit_code = proc.poll()
             if exit_code is not None:
+                owner = _SUNSHINE_ENGINE_OWNERS.pop(instance, None)
+                if owner is not None:
+                    owner.reap()
                 _SUNSHINE_PROCESSES.pop(instance, None)
                 _SUNSHINE_SETTINGS_INSTANCES.discard(instance)
                 if instance == 1:
@@ -736,13 +811,16 @@ def stop_sunshine(
             instances_to_stop = [1, 2]
 
     for inst in instances_to_stop:
-        _SUNSHINE_SETTINGS_INSTANCES.discard(inst)
-        if clear_pipewire_node:
-            set_sunshine_pipewire_node(None, inst)
-        proc = _SUNSHINE_PROCESSES.pop(inst, None)
+        owner = _SUNSHINE_ENGINE_OWNERS.get(inst)
+        if owner is not None:
+            try:
+                owner.stop()
+            except Exception:
+                return False, "Managed Sunshine did not exit; identity ownership is retained."
+            _SUNSHINE_ENGINE_OWNERS.pop(inst, None)
+        proc = _SUNSHINE_PROCESSES.get(inst)
         if proc is None and inst == 1 and _SUNSHINE_PROCESS is not None:
             proc = _SUNSHINE_PROCESS
-            _SUNSHINE_PROCESS = None
         if proc is not None:
             try:
                 if proc.poll() is None:
@@ -754,6 +832,14 @@ def stop_sunshine(
                         proc.wait(timeout=2.0)
             except Exception:
                 pass
+            if proc.poll() is None:
+                return False, "Sunshine did not exit; process ownership is retained. Retry after it stops."
+        _SUNSHINE_PROCESSES.pop(inst, None)
+        if inst == 1:
+            _SUNSHINE_PROCESS = None
+        _SUNSHINE_SETTINGS_INSTANCES.discard(inst)
+        if clear_pipewire_node:
+            set_sunshine_pipewire_node(None, inst)
         if clear_output_name:
             clear_sunshine_output_name(inst)
 

@@ -4,18 +4,19 @@ import QtQuick.Controls
 ComboBox {
     id: cb
     property int disabledIndex: -1
+    property int accentedIndex: -1
     delegate: ItemDelegate {
         width: cb.width
         enabled: index !== cb.disabledIndex
         contentItem: Text {
             text: modelData
-            color: index === cb.disabledIndex ? theme.textMuted : (highlighted ? "#ffffff" : theme.cardTextPrimary)
+            color: index === cb.disabledIndex ? theme.textMuted : ((highlighted || index === cb.accentedIndex) ? "#ffffff" : theme.cardTextPrimary)
             font.pixelSize: 13
             font.weight: Font.DemiBold
             verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
-            color: index !== cb.disabledIndex && highlighted ? theme.surfaceAlt : theme.surface
+            color: index !== cb.disabledIndex && (highlighted || index === cb.accentedIndex) ? theme.surfaceAlt : theme.surface
         }
     }
     background: Rectangle {

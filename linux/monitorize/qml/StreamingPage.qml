@@ -95,8 +95,22 @@ Item {
                     Layout.fillWidth: true
                 }
             }
+            SectionCard {
+                title: "REMOTE LOGIN"; symbol: "session"
+                visible: backend.remoteLoginEnabled
+                Layout.fillWidth: true
+                Text {
+                    text: backend.remoteLoginMessage
+                    color: theme.textPrimary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                }
+                TextEdit {
+                    text: backend.localIp + ":47989"
+                    readOnly: true; selectByMouse: true
+                    color: theme.textSecondary; Layout.fillWidth: true
+                }
+            }
             RowLayout {
-                visible: backend.sessionMode === "Extend"
+                visible: !backend.remoteLoginEnabled && backend.sessionMode === "Extend"
                 Layout.fillWidth: true
                 Layout.topMargin: 18
                 spacing: 16
@@ -127,7 +141,7 @@ Item {
                 }
             }
             Rectangle {
-                visible: backend.sessionMode === "Mirror"
+                visible: !backend.remoteLoginEnabled && backend.sessionMode === "Mirror"
                 Layout.fillWidth: true
                 implicitHeight: summary.implicitHeight + 40
                 radius: theme.cardRadius; color: theme.surface; border.color: theme.border
@@ -198,7 +212,7 @@ Item {
                                     color: displayCard.modelData.live ? "#34d681" : theme.textMuted
                                 }
                                 TextEdit {
-                                    text: backend.sessionRunning ? displayCard.modelData.address : displayCard.modelData.state
+                                    text: displayCard.modelData.state + (backend.sessionRunning ? "\n" + displayCard.modelData.address : "")
                                     color: theme.textSecondary; font.pixelSize: 12
                                     Layout.fillWidth: true; wrapMode: TextEdit.WrapAnywhere
                                     readOnly: true; selectByMouse: true
@@ -264,7 +278,7 @@ Item {
                 }
                 CustomButton {
                     text: "Start added display"
-                    visible: backend.isStreaming && backend.sessionPendingDisplays
+                    visible: !backend.remoteLoginEnabled && backend.isStreaming && backend.sessionPendingDisplays
                     enabled: !backend.sessionBusy
                     onClicked: backend.startSession()
                 }

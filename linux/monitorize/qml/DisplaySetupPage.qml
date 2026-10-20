@@ -13,6 +13,7 @@ Item {
     property string mirrorOutputId: ""
     property var nativeResolutionOptions: ["1280x720 (16:9)", "1280x800 (16:10)", "1920x1080 (16:9)", "1920x1200 (16:10)", "2560x1440 (16:9)", "2560x1600 (16:10)", "3840x2160 (16:9)", "Custom..."]
     property var virtualDisplays: []
+    property var displayBehaviorConfig: ({value: "extend", supported: false})
     ListModel { id: displayModel }
 
     function displayRow(config) {
@@ -22,7 +23,8 @@ Item {
             customWidth: String(config.custom_w || ""),
             customHeight: String(config.custom_h || ""),
             refreshRate: String(config.fps || ""),
-            customRefresh: String(config.custom_fps || "")
+            customRefresh: String(config.custom_fps || ""),
+            clientRequestedSettings: !!config.use_client_display_settings
         }
     }
 
@@ -210,6 +212,9 @@ Item {
     }
 
     Component.onCompleted: {
+        displayBehaviorConfig = backend.loadDisplayBehavior()
+        displayBehavior.currentIndex = displayBehaviorConfig.supported
+            ? Math.max(0, ["extend", "primary", "virtual_only"].indexOf(displayBehaviorConfig.value)) : 0
         backend.refreshVkmsHelperAvailability()
         let saved = backend.loadDisplaySettings()
         displayType.selectValue(saved["display_type"] || "Extend")
@@ -235,7 +240,7 @@ Item {
             spacing: 14
             Text { text: "Configuration"; color: theme.textPrimary; font.pixelSize: 28; font.weight: Font.Bold; Layout.bottomMargin: 6 }
             Text {
-                visible: backend.isStreaming
+                visible: backend.isStreaming || backend.sessionBusy
                 text: "Stop the session to change display configuration."
                 color: theme.textMuted
                 wrapMode: Text.WordWrap
@@ -244,7 +249,7 @@ Item {
             SectionCard {
                 title: "DISPLAY"; symbol: "display"
                 Layout.fillWidth: true
-                enabled: !backend.isStreaming
+                enabled: !backend.isStreaming && !backend.sessionBusy
                 GridLayout {
                     Layout.fillWidth: true
                     columns: 2; columnSpacing: 24; rowSpacing: 12
@@ -279,6 +284,20 @@ Item {
                         }
                     }
                     Text {
+                        text: "Display behavior"
+                        color: theme.textSecondary
+                        visible: displayType.currentText === "Extend" && !createOnly.checked
+                    }
+                    CustomComboBox {
+                        id: displayBehavior
+                        Layout.fillWidth: true
+                        visible: displayType.currentText === "Extend" && !createOnly.checked
+                        model: page.displayBehaviorConfig.supported
+                            ? ["Extend", "Virtual display as primary", "Virtual displays only"]
+                            : ["Extend"]
+                        onActivated: backend.saveDisplayBehavior(["extend", "primary", "virtual_only"][currentIndex])
+                    }
+                    Text {
                         visible: page.vkmsSelected && !backend.vkmsHelperAvailable
                         Layout.columnSpan: 2; Layout.fillWidth: true
                         wrapMode: Text.WordWrap
@@ -286,7 +305,7 @@ Item {
                         text: backend.vkmsAvailabilityMessage
                     }
                     CustomButton {
-                        visible: page.vkmsSelected && !backend.vkmsHelperAvailable
+                        visible: page.vkmsSelected && !backend.vkmsHelperAvailable && backend.vkmsInstallRequired
                         text: "Install monitorize-vkms"
                         onClicked: backend.openMonitorizeVkmsInstallPage()
                     }
@@ -315,11 +334,14 @@ Item {
                     delegate: VirtualDisplayModeCard {
                         id: modeCard
                         required property int index
+                        required property bool clientRequestedSettings
                         Layout.fillWidth: true
                         displayNumber: displayId
                         displayConfig: ({id: displayId, resolution: modeResolution,
                             custom_w: customWidth, custom_h: customHeight,
-                            fps: refreshRate, custom_fps: customRefresh})
+                            fps: refreshRate, custom_fps: customRefresh,
+                            use_client_display_settings: clientRequestedSettings})
+                        clientSettingsAvailable: !createOnly.checked && backend.sunshineAvailable
                         canRemove: displayId === 2
                         vkmsSelected: page.vkmsSelected
                         nativeResolutionOptions: page.nativeResolutionOptions

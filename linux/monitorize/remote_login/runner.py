@@ -1,0 +1,204 @@
+"""Fixed installed non-root boot/desktop engine runners."""
+import json
+import os
+from pathlib import Path
+import signal
+import secrets
+import subprocess
+import threading
+import time
+from monitorize.platform.login_capture_probe import find_boot_output,read_phase
+from monitorize.platform.remote_login_identity import identity_paths
+from .boot_host import BootHost
+from .daemon import require_installed
+from .descriptors import read_descriptor
+from .engine import EngineOwner,RetrySchedule
+from .health import inspect_startup,write_health,rotate_startup_log,ListenerEvidence
+from .settings import read_settings,validate_descriptor
+
+ENGINE=Path('/usr/libexec/monitorize/sunshine')
+ASSETS=Path('/usr/share/monitorize/sunshine/assets')
+BOOT_CONFIG=Path('/etc/monitorize/remote-login/boot.conf')
+APPS=Path('/usr/share/monitorize/remote-login/apps.json')
+
+
+def own_session(session,uid):
+    result=subprocess.run(['/usr/bin/loginctl','show-session',session,'--no-pager',
+        '--property=User','--property=Active','--property=Remote','--property=Type','--property=Class','--property=Seat'],
+        check=True,capture_output=True,text=True,timeout=3)
+    values=dict(line.split('=',1) for line in result.stdout.splitlines() if '=' in line)
+    return (values.get('User')==str(uid) and values.get('Active')=='yes' and
+            values.get('Remote')=='no' and values.get('Type') in ('wayland','x11') and
+            values.get('Class') in ('user','user-early','user-incomplete') and values.get('Seat')=='seat0')
+
+
+def preflight():
+    settings=read_settings()
+    if not settings.enabled or os.geteuid()==0 or os.geteuid()!=settings.uid:
+        raise RuntimeError('Engine runner must use the configured non-root account.')
+    require_installed(__file__);require_installed(ENGINE);require_installed(ASSETS);require_installed(APPS)
+    from .capability import exact_kms_engine
+    if not exact_kms_engine(ENGINE):raise RuntimeError('Install Monitorize Sunshine with the exact KMS output protocol before enabling remote login.')
+    if not os.access('/dev/uinput',os.R_OK|os.W_OK):raise RuntimeError('Selected account cannot access /dev/uinput; rerun input setup.')
+    caps=subprocess.run(['/usr/sbin/getcap','--',str(ENGINE)],check=True,capture_output=True,text=True,timeout=3)
+    if 'cap_sys_admin' not in caps.stdout:raise RuntimeError('Installed Sunshine lacks KMS capability; rerun remote-login setup.')
+    for directory in (settings.directory/'runtime',settings.directory/'logs'):
+        directory.mkdir(mode=0o700,exist_ok=True)
+        info=directory.lstat()
+        if not directory.is_dir() or directory.is_symlink() or info.st_uid!=settings.uid or info.st_mode & 0o077:
+            raise RuntimeError('Engine runtime/log directory is not private.')
+    return settings
+
+
+def _stopping():
+    event=threading.Event()
+    for number in (signal.SIGTERM,signal.SIGINT):signal.signal(number,lambda *_:event.set())
+    return event
+
+
+def _offset(log):
+    try:return log.stat().st_size
+    except FileNotFoundError:return 0
+
+
+def boot_main():
+    settings=preflight();require_installed(BOOT_CONFIG)
+    from .idle import IdleDisplay
+    from .control import ControlServer
+    from .dbus_service import NAME,PATH,INTERFACE
+    owner=EngineOwner(identity_paths(settings.directory));stop=_stopping();lock=threading.RLock()
+    log=settings.directory/'logs/boot.log';boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    def call(method,*args):
+        import dbus
+        from dbus.mainloop import NULL_MAIN_LOOP
+        bus=dbus.SystemBus(private=True,mainloop=NULL_MAIN_LOOP)
+        try:
+            interface=dbus.Interface(bus.get_object(NAME,PATH,introspect=False),INTERFACE)
+            return json.loads(getattr(interface,method)(*args,timeout=18))
+        finally:bus.close()
+    context=call('BootContext')
+    def engine_call(operation):return call('EngineDisplay',context['generation'],operation)
+    def remove():
+        owner.stop()
+        engine_call('idle')
+    display=IdleDisplay(lambda:engine_call('prepare'),remove)
+    # A runner restart must not lose cleanup of an already connected reservation.
+    if context.get('connected') is True:display.deadline=time.monotonic()+20
+    token=secrets.token_hex(32);control_path=settings.directory/'runtime/boot-control.sock'
+    def request(message):
+        if message.get('operation')=='prepare':engine_call('check')
+        return display.request(message)
+    server=ControlServer(control_path,token,lambda:owner.process,request,lock)
+    host=BootHost(owner,owner.paths,ENGINE,BOOT_CONFIG,ASSETS,prepare=lambda:rotate_startup_log(log))
+    host.control_environment=dict(MONITORIZE_CONTROL_SOCKET=str(control_path),MONITORIZE_CONTROL_TOKEN=token,
+                                  MONITORIZE_CONTROL_INSTANCE='1')
+    listener=ListenerEvidence();previous=None;next_check=0
+    def evidence():
+        from .network_evidence import collect_network_evidence
+        print(json.dumps({'network_evidence':collect_network_evidence()}),flush=True)
+    threading.Thread(target=evidence,daemon=True,name='boot-network-evidence').start()
+    try:
+        while not stop.is_set():
+            phase=read_phase()
+            with lock:
+                if phase!='greeter':break
+                if time.monotonic()>=next_check:
+                    engine_call('check');next_check=time.monotonic()+1
+                if owner.process is not None and owner.process.poll() is not None:display.reset_engine()
+                if display.due():
+                    try:display.expire()
+                    except Exception as error:
+                        print('Greeter cleanup failed: '+type(error).__name__,flush=True)
+                        display.deadline=time.monotonic()+5
+                # Placeholder is never captured; managed prepare returns the exact live target.
+                if not host.step(phase,None,time.monotonic()):break
+                if owner.process is not previous:
+                    previous=owner.process;listener=ListenerEvidence()
+                health=dict(listening=bool(owner.running and listener.read(log)),
+                            capture_ready=bool(owner.running and display.frames_ready))
+                if health['capture_ready']:host.healthy()
+                write_health(settings.directory/'runtime/boot-health.json',dict(health,pid=os.getpid(),
+                    boot_id=boot_id,time=time.monotonic(),session=context['session'],state=display.state))
+            stop.wait(.25)
+        return 0
+    finally:server.close();host.close()
+
+
+def desktop_command(settings,descriptor):
+    values=validate_descriptor({key:value for key,value in descriptor.items() if key in
+        ('capture','output_name','pipewire_node','wayland_display','display')},settings,descriptor['output_name'])
+    config=Path(settings.profile)/'sunshine.conf'
+    argv=[str(ENGINE),str(config),'capture='+values['capture'],'output_name='+values['output_name'],
+          'upnp=disabled','origin_web_ui_allowed=pc','file_apps='+str(APPS),
+          'encoder='+settings.encoder,
+          'log_path='+str(settings.directory/'logs/desktop.log')]
+    if settings.adapter:argv.append('adapter_name='+settings.adapter)
+    argv.extend(key+'='+value for key,value in identity_paths(settings.directory).config_overrides().items())
+    environment=dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin',LANG='C.UTF-8',HOME=settings.home,
+        XDG_RUNTIME_DIR=f'/run/user/{settings.uid}',DBUS_SESSION_BUS_ADDRESS=f'unix:path=/run/user/{settings.uid}/bus',
+        XDG_CURRENT_DESKTOP='KDE',XDG_SESSION_TYPE='wayland',XDG_SEAT='seat0',
+        SUNSHINE_ASSETS_DIR=str(ASSETS),MONITORIZE_REQUIRE_EXACT_OUTPUT='1',
+        MONITORIZE_CAPTURE_OUTPUT=values['output_name'])
+    if 'pipewire_node' in values:environment['SUNSHINE_PIPEWIRE_NODE']=str(values['pipewire_node'])
+    for key,target in (('wayland_display','WAYLAND_DISPLAY'),('display','DISPLAY')):
+        if key in values:environment[target]=values[key]
+    return argv,environment
+
+
+def desktop_main():
+    settings=preflight();descriptor=read_descriptor(settings.runtime/'desktop.json',settings.uid)
+    argv,environment=desktop_command(settings,descriptor)
+    owner=EngineOwner(identity_paths(settings.directory));retry=RetrySchedule();stop=_stopping()
+    boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    log=settings.directory/'logs/desktop.log'
+    from .idle import IdleDisplay
+    from .control import ControlServer
+    from .dbus_service import NAME,PATH,INTERFACE
+    lock=threading.RLock()
+    def engine_call(operation):
+        import dbus
+        from dbus.mainloop import NULL_MAIN_LOOP
+        bus=dbus.SystemBus(private=True,mainloop=NULL_MAIN_LOOP)
+        try:
+            interface=dbus.Interface(bus.get_object(NAME,PATH,introspect=False),INTERFACE)
+            return json.loads(interface.EngineDisplay(descriptor['generation'],operation,timeout=18))
+        finally:bus.close()
+    def remove():
+        # Release both retained app/capture state and the inherited identity FD.
+        # The coordinator independently checks identity release before unplugging.
+        owner.stop()
+        engine_call('idle')
+    display=IdleDisplay(lambda:engine_call('prepare'),remove)
+    # A carried boot output can be idle even before the first desktop stream.
+    display.deadline=time.monotonic()+20
+    listener=ListenerEvidence()
+    token=secrets.token_hex(32)
+    control_path=settings.directory/'runtime/control.sock'
+    server=ControlServer(control_path,token,lambda:owner.process,display.request,lock)
+    environment.update(MONITORIZE_CONTROL_SOCKET=str(control_path),MONITORIZE_CONTROL_TOKEN=token,
+                       MONITORIZE_CONTROL_INSTANCE='1')
+    try:
+        while not stop.is_set():
+            if not own_session(descriptor['session'],settings.uid):break
+            with lock:
+                if owner.reap() is not None:
+                    display.reset_engine();retry.failed(time.monotonic())
+                if display.due():
+                    try:display.expire()
+                    except Exception as error:
+                        print('Remote display cleanup failed: '+type(error).__name__,flush=True)
+                        display.deadline=time.monotonic()+5
+                if not owner.running and (retry.deadline is None or retry.due(time.monotonic())):
+                    try:
+                        owner.start(argv,environment,prepare=lambda:rotate_startup_log(log))
+                        listener=ListenerEvidence()
+                    except (OSError,ValueError,RuntimeError):retry.failed(time.monotonic())
+                health=dict(listening=bool(owner.running and listener.read(log)),
+                            capture_ready=bool(owner.running and display.frames_ready))
+                if health['capture_ready']:retry.healthy()
+                write_health(settings.directory/'runtime/desktop-health.json',dict(health,pid=os.getpid(),
+                    boot_id=boot_id,time=time.monotonic(),session=descriptor['session'],state=display.state))
+            stop.wait(.25)
+        return 0
+    finally:
+        retry.cancel();server.close();owner.stop()

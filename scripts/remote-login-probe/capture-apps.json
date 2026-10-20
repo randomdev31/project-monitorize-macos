@@ -1,0 +1,12 @@
+{
+  "env": {},
+  "apps": [
+    {
+      "name": "Desktop",
+      "image-path": "desktop.png"
+    },
+    {
+      "name": "Login screen"
+    }
+  ]
+}

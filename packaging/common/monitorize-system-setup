@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Root-only helper for the two Monitorize first-run setup actions."""
+"""Root-only helper for selected Monitorize first-run setup actions."""
 
 import argparse
 import grp
@@ -8,6 +8,7 @@ import os
 import pwd
 import subprocess
 import sys
+from pathlib import Path
 
 
 def command_path(*candidates):
@@ -55,6 +56,11 @@ def enable_firewall():
     if firewall_cmd:
         state = subprocess.run([firewall_cmd, "--state"], text=True, capture_output=True, check=False)
         if state.returncode == 0:
+            if 'monitorize' not in run([firewall_cmd, '--permanent', '--get-services']).split():
+                # A source install can add the XML after firewalld was started.
+                run([firewall_cmd, '--reload'])
+                if 'monitorize' not in run([firewall_cmd, '--permanent', '--get-services']).split():
+                    raise RuntimeError('Monitorize firewall profile is missing. Install packaging/fedora/monitorize.xml as /usr/lib/firewalld/services/monitorize.xml, reload firewalld, then retry setup.')
             run([firewall_cmd, "--permanent", "--add-service=monitorize"])
             run([firewall_cmd, "--reload"])
             return "Firewalld now allows Monitorize."
@@ -73,22 +79,55 @@ def main():
     parser = argparse.ArgumentParser(description="Configure Monitorize input and firewall access.")
     parser.add_argument("--input", action="store_true", help="grant the authorizing user uinput access")
     parser.add_argument("--firewall", action="store_true", help="allow Monitorize through an active firewall")
+    parser.add_argument('--unattended-vkms', action='store_true')
+    parser.add_argument('--remote-login', choices=('enable','disable','remove'))
     args = parser.parse_args()
-    if not args.input and not args.firewall:
-        parser.error("select --input and/or --firewall")
+    if not args.input and not args.firewall and not args.unattended_vkms and not args.remote_login:
+        parser.error("select --input, --firewall and/or --unattended-vkms")
     if os.geteuid() != 0:
         raise RuntimeError("This helper requires root privileges.")
 
+    if args.remote_login:
+        if args.input or args.firewall or args.unattended_vkms:
+            parser.error("Remote-login enrollment is a separate setup operation.")
+        invoking_user()
+        entry = Path('/usr/libexec/monitorize/remote-login/entry.py')
+        if not entry.is_file():
+            raise RuntimeError('Install Monitorize remote-login service assets first.')
+        result = subprocess.run([sys.executable, '-I', str(entry), 'setup-' + args.remote_login],
+                                check=False, text=True, capture_output=True)
+        print(result.stdout.strip())
+        if result.returncode:
+            if result.stderr.strip():
+                print(result.stderr.strip(), file=sys.stderr)
+            raise SystemExit(result.returncode)
+        return
+
+    host_authorization = Path('/usr/libexec/monitorize-vkms/monitorize-vkms-authorization')
+    if args.unattended_vkms and not host_authorization.is_file():
+        raise RuntimeError('Install or upgrade monitorize-vkms before enabling unattended displays.')
     username = invoking_user()
     messages = []
     logout_required = False
-    if args.input:
-        input_changed, input_message = enable_input(username)
-        messages.append(input_message)
-        logout_required = input_changed
-    if args.firewall:
-        messages.append(enable_firewall())
+    try:
+        if args.unattended_vkms:
+            response = json.loads(run([sys.executable, '-I', str(host_authorization), 'enable']))
+            if not response.get('success'):
+                raise RuntimeError(response.get('message') or 'Could not authorize VKMS displays.')
+            messages.append(response['message'])
+        if args.input:
+            input_changed, input_message = enable_input(username)
+            messages.append(input_message)
+            logout_required = input_changed
+        if args.firewall:
+            messages.append(enable_firewall())
+    except Exception as exc:
+        detail = ' '.join(messages + [str(exc)])
+        print(json.dumps({'success': False, 'message': detail, 'logout_required': logout_required}))
+        print(detail, file=sys.stderr)
+        raise SystemExit(1)
     print(json.dumps({"success": True, "message": " ".join(messages), "logout_required": logout_required}))
+
 
 
 if __name__ == "__main__":

@@ -7,11 +7,38 @@ from monitorize.desktop.streaming_controller import StreamingController
 
 
 class SessionTest(unittest.TestCase):
+    def test_mirror_crash_retry_keeps_output_and_stop_cancels_it(self):
+        self.config.update(display_type='Mirror',mirror_output='eDP-1')
+        scheduled=[]
+        self.c.mirror_retry.schedule=lambda delay,callback:scheduled.append((delay,callback))
+        with patch('monitorize.desktop.streaming_controller.load_general_settings',return_value={'client_restart_on_crash':True}), \
+             patch('monitorize.desktop.streaming_controller.check_sunshine_health',return_value=(False,1,'')), \
+             patch('monitorize.desktop.streaming_controller.is_sunshine_running',return_value=False):
+            self.s.start()
+            self.c._check_sunshine_health()
+            QCoreApplication.processEvents()
+            self.assertTrue(self.s.active)
+            self.assertTrue(self.c.mirror_retry.pending)
+            self.assertEqual(scheduled[0][0],2000)
+            scheduled.pop(0)[1]()
+            self.assertEqual(self.c.mirror_output,'eDP-1')
+            self.assertEqual(self.c._start_instance.call_count,2)
+            self.c._check_sunshine_health()
+            QCoreApplication.processEvents()
+            callback=scheduled[-1][1]
+            self.s.stop();callback()
+            self.assertFalse(self.s.active)
+            self.assertEqual(self.c._start_instance.call_count,2)
+            self.c._start_display_process.assert_not_called()
+
     @classmethod
     def setUpClass(cls):
         cls.app = QCoreApplication.instance() or QCoreApplication([])
 
     def setUp(self):
+        general = patch('monitorize.desktop.session.load_general_settings', return_value={'display_behavior': 'extend'})
+        general.start()
+        self.addCleanup(general.stop)
         readiness = patch("monitorize.desktop.streaming_controller.get_sunshine_startup_status",
                           return_value=("ready", ""))
         readiness.start()
@@ -69,6 +96,106 @@ class SessionTest(unittest.TestCase):
         self.s.add()
         self.s.start()
         self.ready("additional")
+
+    def fake_client_runtime(self):
+        from types import SimpleNamespace
+        runtime = Mock()
+        runtime.slots = {}
+        runtime.active = False
+        runtime.busy = False
+        runtime.retiring = False
+        runtime.cards = []
+        def start_slot(instance, config):
+            runtime.slots[instance] = SimpleNamespace(status="Waiting for client", config=config)
+            runtime.active = True
+            return True
+        runtime.start_slot.side_effect = start_slot
+        runtime.start_manual_slot.side_effect = start_slot
+        self.s.client_runtime = runtime
+        return runtime
+
+    def test_preserved_client_preference_does_not_break_display_only_mode(self):
+        self.config["use_client_display_settings"] = True
+        self.c.streaming_backend = "none"
+        self.s.configuration_changed()
+        self.s.start()
+        self.c._start_display_process.assert_called_once()
+        self.assertIsNone(self.s.client_runtime)
+
+    def test_client_preset_snapshot_resolves_custom_manual_dimensions(self):
+        self.config.update(use_client_display_settings=True, resolution="Custom...",
+                           custom_w="2304", custom_h="1440", fps="90")
+        self.s.configuration_changed()
+        snapshot = self.s.configured_snapshot()
+        self.assertEqual(snapshot["primary"]["resolution"], "2304x1440")
+
+    def test_second_client_preset_inherits_primary_vkms_backend(self):
+        self.s.preset_configuration = {
+            "primary": {"resolution": "2560x1600", "fps": "120", "virtual_display_creator": "vkms",
+                        "use_client_display_settings": True},
+            "second": {"enabled": True, "resolution": "1920x1080", "fps": "60",
+                       "use_client_display_settings": True}}
+        self.assertEqual(self.s.second_configuration()["virtual_display_creator"], "vkms")
+
+    def test_client_cards_start_two_independent_hosts_without_creating_displays(self):
+        self.config["use_client_display_settings"] = True
+        self.second_config.update(enabled=True, use_client_display_settings=True)
+        self.s.configuration_changed()
+        runtime = self.fake_client_runtime()
+        self.s.start()
+        self.assertEqual([call.args[0] for call in runtime.start_slot.call_args_list], [1, 2])
+        self.c._start_display_process.assert_not_called()
+        self.c._start_instance.assert_not_called()
+        self.assertTrue(self.s.active)
+        self.assertFalse(self.s.busy)
+
+    def test_mixed_cards_delegate_both_slots_without_primary_readiness_dependency(self):
+        self.config["use_client_display_settings"] = True
+        self.second_config.update(enabled=True, use_client_display_settings=False)
+        self.s.configuration_changed()
+        runtime = self.fake_client_runtime()
+        self.s.start()
+        self.assertEqual(set(runtime.slots), {1, 2})
+        self.assertTrue(runtime.slots[1].config["use_client_display_settings"])
+        self.assertFalse(runtime.slots[2].config["use_client_display_settings"])
+        self.c._start_display_process.assert_not_called()
+
+    def test_listener_auto_start_skips_manual_cards(self):
+        self.config["use_client_display_settings"] = False
+        self.second_config.update(enabled=True, use_client_display_settings=True)
+        self.s.configuration_changed()
+        runtime = self.fake_client_runtime()
+        self.s.start(listeners_only=True)
+        self.assertEqual([call.args[0] for call in runtime.start_slot.call_args_list], [2])
+        self.assertTrue(self.s.pending_displays)
+        self.s.start()
+        runtime.start_manual_slot.assert_called_once()
+        self.assertEqual(set(runtime.slots), {1, 2})
+
+    def test_listener_stop_cancels_runtime_before_legacy_cleanup(self):
+        runtime = self.fake_client_runtime()
+        self.s.stop()
+        runtime.stop.assert_called_once()
+
+    def test_failed_listener_remains_stoppable_without_claiming_host_ready(self):
+        from types import SimpleNamespace
+        runtime = self.fake_client_runtime()
+        runtime.active = True
+        runtime.slots = {1: SimpleNamespace(status="error")}
+        self.assertTrue(self.s.active)
+        self.assertFalse(self.s.ready)
+        runtime.slots[1].status = "waiting"
+        self.assertTrue(self.s.ready)
+
+    def test_client_preset_snapshot_retains_manual_modes_before_connection(self):
+        self.config.update(use_client_display_settings=True, resolution="2560x1600", fps="120")
+        self.second_config.update(enabled=True, use_client_display_settings=True)
+        self.s.configuration_changed()
+        self.fake_client_runtime()
+        snapshot = self.s.configured_snapshot()
+        self.assertTrue(snapshot["primary"]["use_client_display_settings"])
+        self.assertEqual(snapshot["primary"]["resolution"], "2560x1600")
+        self.assertTrue(snapshot["second"]["use_client_display_settings"])
 
     def test_add_only_creates_cards_in_both_backend_modes(self):
         for backend in ("sunshine", "none"):

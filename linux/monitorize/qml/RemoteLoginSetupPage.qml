@@ -1,0 +1,76 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+Item {
+    id: page
+    objectName: "remoteLoginSetupPage"
+    property var setupStatus: ({available: false, enabled: false, supported: false})
+    property string resultMessage: ""
+    function refresh() { setupStatus = backend.getRemoteLoginSetupStatus() }
+    Component.onCompleted: refresh()
+    Connections {
+        target: backend
+        function onRemoteLoginSetupFinished(result) {
+            page.resultMessage = result.message || "Remote-login setup did not complete."
+            consent.checked = false
+            page.refresh()
+        }
+    }
+    ScrollView {
+        anchors.fill: parent; clip: true; contentWidth: availableWidth
+        ColumnLayout {
+            width: parent.width; spacing: 16
+            Text { text: "Remote login at boot"; color: theme.textPrimary; font.pixelSize: 28; font.weight: Font.Bold }
+            SectionCard {
+                title: "SETUP"; symbol: "session"; Layout.fillWidth: true
+                Text {
+                    text: "Connect to the login screen. After signing in, reconnect to the same Moonlight PC."
+                    color: theme.textPrimary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                }
+                Text {
+                    text: page.setupStatus.message || "Checking installed service assets…"
+                    color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                }
+                Text {
+                    text: "Initial integration: Plasma Login Manager, a reserved 1920×1080 display and software encoding. Manual display settings are retained for use when remote login is disabled."
+                    color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                }
+                Text {
+                    text: "Setup keeps pairing in protected system storage and starts Monitorize's desktop controller after login. Wi-Fi configuration is a separate step. Reboot after enabling or disabling."
+                    color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                }
+                CustomCheckBox {
+                    id: consent
+                    objectName: "remoteLoginConsent"
+                    text: "Enable access to this account's login screen for my paired clients."
+                    Layout.fillWidth: true
+                    enabled: !backend.remoteLoginSetupBusy && page.setupStatus.available && page.setupStatus.supported
+                }
+                RowLayout {
+                    CustomButton {
+                        objectName: "remoteLoginEnable"
+                        text: backend.remoteLoginSetupBusy ? "Working…" : page.setupStatus.enabled ? "Re-run setup" : "Enable"
+                        enabled: !backend.remoteLoginSetupBusy && consent.checked && page.setupStatus.available && page.setupStatus.supported
+                        onClicked: backend.configureRemoteLogin(true)
+                    }
+                    CustomButton {
+                        text: "Disable"; danger: true
+                        visible: page.setupStatus.enabled
+                        enabled: !backend.remoteLoginSetupBusy
+                        onClicked: backend.configureRemoteLogin(false)
+                    }
+                }
+            }
+            Text {
+                text: page.resultMessage; visible: text.length > 0
+                color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            RowLayout {
+                CustomButton { text: "Back"; primary: false; onClicked: page.StackView.view.pop() }
+                CustomButton { text: "Refresh"; primary: false; enabled: !backend.remoteLoginSetupBusy; onClicked: page.refresh() }
+                CustomButton { text: "Wi-Fi before login"; primary: false; onClicked: page.StackView.view.push("BootWifiSetupPage.qml") }
+            }
+        }
+    }
+}

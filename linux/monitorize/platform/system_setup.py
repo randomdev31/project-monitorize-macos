@@ -13,6 +13,16 @@ from pathlib import Path
 from monitorize.platform.polkit_errors import authentication_error_message
 
 HELPER = Path("/usr/libexec/monitorize/monitorize-system-setup")
+VKMS_AUTHORIZATION_HELPER = Path('/usr/libexec/monitorize-vkms/monitorize-vkms-authorization')
+
+
+def vkms_authorization_command(enabled):
+    if not VKMS_AUTHORIZATION_HELPER.is_file():
+        return None, {'success': False, 'message': 'Install or upgrade monitorize-vkms on the host first.'}
+    pkexec = shutil.which('pkexec')
+    if not pkexec:
+        return None, {'success': False, 'message': 'Polkit (pkexec) is not installed.'}
+    return [pkexec, str(VKMS_AUTHORIZATION_HELPER), 'enable' if enabled else 'disable'], None
 
 
 def _input_ready() -> bool:
@@ -47,12 +57,12 @@ def apply_system_setup(enable_input: bool, enable_firewall: bool) -> dict[str, o
     return parse_system_setup_result(result.returncode, result.stdout, result.stderr)
 
 
-def system_setup_command(enable_input: bool, enable_firewall: bool):
+def system_setup_command(enable_input: bool, enable_firewall: bool, enable_vkms=False):
     """Build the fixed privileged command without starting it."""
     status = get_system_setup_status()
     if not status["available"]:
         return None, {"success": False, "message": "System setup is available only from the RPM or DEB package."}
-    if not enable_input and not enable_firewall:
+    if not enable_input and not enable_firewall and not enable_vkms:
         return None, {"success": False, "message": "Select at least one system setup action."}
 
     pkexec = shutil.which("pkexec")
@@ -64,6 +74,8 @@ def system_setup_command(enable_input: bool, enable_firewall: bool):
         command.append("--input")
     if enable_firewall:
         command.append("--firewall")
+    if enable_vkms:
+        command.append('--unattended-vkms')
 
     return command, None
 
@@ -71,7 +83,15 @@ def system_setup_command(enable_input: bool, enable_firewall: bool):
 def parse_system_setup_result(returncode, stdout, stderr):
     """Apply the same response rules to synchronous and Qt process callers."""
     if returncode != 0:
-        detail = stderr.strip() or "Authorization was cancelled or setup failed."
+        detail = stderr.strip()
+        if not detail:
+            try:
+                failure = json.loads(stdout)
+                if isinstance(failure, dict) and failure.get('success') is False:
+                    detail = str(failure.get('message') or '')
+            except (TypeError, ValueError):
+                pass
+        detail = detail or "Authorization was cancelled or setup failed."
         detail = authentication_error_message(detail) or detail
         return {"success": False, "message": detail}
 
@@ -83,3 +103,35 @@ def parse_system_setup_result(returncode, stdout, stderr):
         return {"success": False, "message": "System setup returned an invalid response."}
     response["success"] = bool(response.get("success", False))
     return response
+
+
+def remote_login_setup_status():
+    """Read enrollment metadata only; does not contact or activate a service."""
+    from monitorize.remote_login.settings import SETTINGS,read_settings
+    entry=Path('/usr/libexec/monitorize/remote-login/entry.py')
+    result={'available':HELPER.is_file() and entry.is_file(),'enabled':False,
+            'supported':Path('/etc/systemd/system/display-manager.service').resolve().name=='plasmalogin.service',
+            'message':'Remote login is optional and currently validates Plasma Login Manager only.'}
+    if SETTINGS.exists():
+        try:
+            settings=read_settings()
+            if settings.uid!=os.getuid():
+                result.update(available=False,message='Remote login belongs to another local account.')
+            else:result['enabled']=settings.enabled
+        except ValueError:result.update(available=False,message='Remote-login configuration needs administrator repair.')
+    if not result['available'] and not SETTINGS.exists():
+        result['message']='Install the trusted remote-login service assets before enabling this feature.'
+    return result
+
+
+def apply_remote_login_setup(enabled):
+    status=remote_login_setup_status()
+    if not status['available']:return {'success':False,'message':status['message']}
+    pkexec=shutil.which('pkexec')
+    if not pkexec:return {'success':False,'message':'Install Polkit and run an authentication agent in your desktop.'}
+    try:
+        result=subprocess.run([pkexec,str(HELPER),'--remote-login','enable' if enabled else 'disable'],
+            text=True,capture_output=True,timeout=120,check=False)
+    except subprocess.TimeoutExpired:return {'success':False,'message':'Remote-login setup timed out. Inspect its enrollment status before retrying.'}
+    except OSError:return {'success':False,'message':'Could not start the installed administrator setup helper.'}
+    return parse_system_setup_result(result.returncode,result.stdout,result.stderr)

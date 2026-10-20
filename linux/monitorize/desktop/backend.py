@@ -55,7 +55,7 @@ from monitorize.platform.system_setup import (
     system_setup_command,
 )
 from monitorize.platform.utils import LINUX_DIR, get_local_ip
-from monitorize.platform.monitorize_vkms_dbus import MonitorizeVkmsClient
+from monitorize.platform.monitorize_vkms_dbus import MonitorizeVkmsClient, VkmsCliNotFoundError
 from monitorize.platform.vkms_backend import open_monitorize_vkms_install_page
 
 
@@ -73,17 +73,20 @@ class MonitorizeBackend(QObject):
     logAppended = pyqtSignal(str, str)
     secondStreamActiveChanged = pyqtSignal(bool)
     configureDisplayRequested = pyqtSignal()
+    clientDisplaySettingsChanged = pyqtSignal()
     presetsChanged = pyqtSignal()
     presetLaunchStatusChanged = pyqtSignal(str)
     systemSetupAvailableChanged = pyqtSignal(bool)
     systemSetupPendingChanged = pyqtSignal(bool)
     streamingBackendChanged = pyqtSignal(str)
     vkmsHelperAvailabilityChanged = pyqtSignal()
-    _vkmsWorkerFinished = pyqtSignal(bool, str)
+    _vkmsWorkerFinished = pyqtSignal(bool, str, bool)
     virtualDisplayCleanupChanged = pyqtSignal()
     virtualDisplayCleanupFinished = pyqtSignal(bool, str)
     uiVisibleChanged = pyqtSignal(bool)
     systemSetupFinished = pyqtSignal("QVariantMap")
+    bootWifiChanged = pyqtSignal()
+    bootWifiFinished = pyqtSignal("QVariantMap")
     systemSetupRunningChanged = pyqtSignal(bool)
     pairMoonlightFinished = pyqtSignal(int, bool, str)
     pairingRunningChanged = pyqtSignal(bool)
@@ -97,6 +100,13 @@ class MonitorizeBackend(QObject):
     sunshineChoicesFinished = pyqtSignal(int, bool, str)
     _sunshineChoicesWorkerFinished = pyqtSignal(int, bool, str)
     sunshineSettingsRevisionChanged = pyqtSignal(int)
+
+    vkmsAuthorizationReady = pyqtSignal("QVariantMap")
+    _vkmsAuthorizationWorkerFinished = pyqtSignal("QVariantMap")
+    remoteLoginChanged = pyqtSignal()
+    remoteLoginSetupChanged = pyqtSignal()
+    remoteLoginSetupFinished = pyqtSignal("QVariantMap")
+    _remoteLoginSetupWorkerFinished = pyqtSignal("QVariantMap")
 
     def __init__(self, de, parent=None):
         super().__init__(parent)
@@ -115,6 +125,14 @@ class MonitorizeBackend(QObject):
         self._system_setup_cancelled = False
         self._background_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="monitorize-ui")
         self._closing = False
+        self._vkms_authorization_busy = False
+        self._vkmsAuthorizationWorkerFinished.connect(self._finish_vkms_authorization)
+        self._remote_login = None
+        self._remote_setup_busy = False
+        self._remoteLoginSetupWorkerFinished.connect(self._finish_remote_login_setup)
+        self._boot_wifi_client = None
+        self._boot_wifi_profiles = []
+        self._boot_wifi_status = {"code": "checking", "message": "Check NetworkManager Wi-Fi settings."}
         self._pairing_serial = 0
         self._pairing_active = 0
         self._pairingWorkerFinished.connect(self._finish_pairing)
@@ -128,6 +146,9 @@ class MonitorizeBackend(QObject):
         self._sunshine_save_serial = 0
         self._sunshine_settings_revision = 0
         self._pending_session_start = False
+        self._pending_listeners_only = False
+        self._listen_on_open_attempted = False
+        self._session_start_generation = 0
         self._sunshineChoicesWorkerFinished.connect(self._finish_sunshine_choices)
         self._system_setup_timeout = QTimer(self)
         self._system_setup_timeout.setSingleShot(True)
@@ -144,6 +165,11 @@ class MonitorizeBackend(QObject):
         from monitorize.desktop.session import Session
         self.session = Session(self.streaming, self)
         self.session.changed.connect(self.sessionChanged)
+        self.session.changed.connect(lambda: self.isStreamingChanged.emit(self.session.active))
+        self.session.changed.connect(self._resume_vkms_preset)
+        from monitorize.desktop.remote_login_runtime import RemoteLoginRuntime
+        self._remote_login = RemoteLoginRuntime(self)
+        self._remote_login.changed.connect(self._remote_login_changed)
         self._diagnostic_log_cache = {}
         self._presets = load_presets()
         self._preset_launch_status = ""
@@ -152,6 +178,7 @@ class MonitorizeBackend(QObject):
             "2560x1440", "2560x1600", "3840x2160", "Custom...",
         ]
         self._vkms_helper_available = False
+        self._vkms_install_required = False
         self._vkms_status_message = "Checking host monitorize-vkms…"
         self._vkms_check_running = False
         self._vkms_pending_start = None
@@ -273,8 +300,80 @@ class MonitorizeBackend(QObject):
             return False
         return path.is_file() and QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
+    @pyqtProperty(bool, notify=remoteLoginSetupChanged)
+    def remoteLoginSetupBusy(self):
+        return self._remote_setup_busy
+
+    @pyqtSlot(result="QVariantMap")
+    def getRemoteLoginSetupStatus(self):
+        from monitorize.platform.system_setup import remote_login_setup_status
+        return remote_login_setup_status()
+
+    @pyqtSlot(bool)
+    def configureRemoteLogin(self, enabled):
+        if self._remote_setup_busy or self._closing:
+            return
+        if enabled and self.session.active:
+            self.remoteLoginSetupFinished.emit({"success": False, "message": "Stop the current stream before configuring remote login."})
+            return
+        self._remote_setup_busy = True
+        self.remoteLoginSetupChanged.emit()
+        def work():
+            from monitorize.platform.system_setup import apply_remote_login_setup
+            from monitorize.desktop.remote_login_controller import configure
+            try:
+                result = apply_remote_login_setup(enabled)
+                if result.get("success"):
+                    try:
+                        configure(enabled)
+                    except Exception:
+                        result = {**result, "success": False, "partial": True,
+                                  "message": "Boot enrollment changed, but the desktop controller could not be configured. Fix the user systemd service and rerun setup before rebooting."}
+            except Exception:
+                result = {"success": False, "message": "Remote-login setup failed. Inspect enrollment status before retrying."}
+            self._remoteLoginSetupWorkerFinished.emit(result)
+        self._background_executor.submit(work)
+
+    def _finish_remote_login_setup(self, result):
+        if self._closing:
+            return
+        self._remote_setup_busy = False
+        if result.get("success"):
+            from monitorize.desktop.remote_login_runtime import RemoteLoginRuntime
+            if self._remote_login is not None:
+                self._remote_login.close()
+            self._remote_login = RemoteLoginRuntime(self)
+            self._remote_login.changed.connect(self._remote_login_changed)
+        self.remoteLoginSetupChanged.emit()
+        self._remote_login_changed()
+        self.remoteLoginSetupFinished.emit(result)
+
+    def _remote_login_changed(self):
+        if self._closing:
+            return
+        self.remoteLoginChanged.emit()
+        self.sessionChanged.emit()
+        self.streamingStatusChanged.emit(self.streamingStatus)
+        self.isStreamingChanged.emit(self.isStreaming)
+
+    @pyqtProperty(bool, notify=remoteLoginChanged)
+    def remoteLoginEnabled(self):
+        runtime = getattr(self, "_remote_login", None)
+        return runtime is not None and runtime.enabled
+
+
+    @pyqtProperty(str, notify=remoteLoginChanged)
+    def remoteLoginMessage(self):
+        return self._remote_login.message if getattr(self, "remoteLoginEnabled", False) else ""
+
+    @pyqtProperty(str, notify=remoteLoginChanged)
+    def remoteLoginState(self):
+        return self._remote_login.status.get("state", "unavailable") if getattr(self, "remoteLoginEnabled", False) else "disabled"
+
     @pyqtProperty("QVariant", notify=sessionChanged)
     def sessionDisplays(self):
+        if getattr(self, "remoteLoginEnabled", False):
+            return []
         return self.session.cards()
 
     @pyqtProperty(bool, notify=sessionChanged)
@@ -287,10 +386,16 @@ class MonitorizeBackend(QObject):
 
     @pyqtProperty(bool, notify=sessionChanged)
     def sessionBusy(self):
+        if getattr(self, "remoteLoginEnabled", False):
+            return self._remote_login.busy
         return self.session.busy or self._vkms_pending_start is not None or self._vkms_pending_preset is not None or bool(self.streaming._vkms_retiring)
 
     @pyqtProperty(bool, notify=sessionChanged)
     def sessionRunning(self):
+        if getattr(self, "remoteLoginEnabled", False):
+            return self._remote_login.status.get("listening", False) or self._remote_login.status.get("capture_ready", False)
+        if self.session.client_runtime and self.session.client_runtime.active:
+            return self.session.ready
         return self.streaming.streaming and self.streaming.primary_ready
 
     @pyqtProperty(str, notify=sessionChanged)
@@ -307,9 +412,27 @@ class MonitorizeBackend(QObject):
 
     @pyqtSlot()
     def startSession(self):
+        self._pending_listeners_only = False
+        self._start_session_checked()
+
+    def startConfiguredListeners(self):
+        """Apply the opt-in once per app launch, after the window is initialized."""
+        if getattr(self, "remoteLoginEnabled", False):
+            return
+        if self._listen_on_open_attempted or self._closing:
+            return
+        self._listen_on_open_attempted = True
+        if (self._streaming_backend != "sunshine"
+                or not load_general_settings().get("client_listen_on_open", False)
+                or not (getattr(self.session, "mode", "Extend") == "Mirror" or self.session.has_client_cards())):
+            return
+        self._pending_listeners_only = getattr(self.session, "mode", "Extend") != "Mirror"
         self._start_session_checked()
 
     def _start_session_checked(self, checked=False):
+        if getattr(self, "remoteLoginEnabled", False):
+            self._remote_login.start()
+            return
         if self.streaming._vkms_retiring:
             self.streaming._set_status("VKMS displays are still stopping — please wait")
             return
@@ -332,10 +455,16 @@ class MonitorizeBackend(QObject):
                 and not self.ensureNativeCompositor()):
             return
         self._cancel_settings_open()
-        self.session.start()
+        self.session.start(listeners_only=self._pending_listeners_only)
+        self._pending_listeners_only = False
 
     @pyqtSlot()
     def stopSession(self):
+        if getattr(self, "remoteLoginEnabled", False):
+            self._remote_login.stop()
+            return
+        self._session_start_generation += 1
+        self._pending_listeners_only = False
         self._vkms_pending_preset = None
         self._vkms_pending_start = None
         self._pending_session_start = False
@@ -358,10 +487,12 @@ class MonitorizeBackend(QObject):
 
     @pyqtProperty(bool, notify=isStreamingChanged)
     def isStreaming(self):
-        return self.streaming.streaming
+        return self.session.active or bool(getattr(self, "_remote_login", None) and self._remote_login.active)
 
     @pyqtProperty(bool, notify=sessionChanged)
     def canSavePreset(self):
+        if self.session.client_runtime and self.session.client_runtime.active:
+            return self.session.ready and not self.session.busy
         if not self.streaming.streaming or not self.streaming.primary_ready or self.session.busy:
             return False
         second = (self.streaming.pending_options or {}).get("second") or {}
@@ -369,7 +500,7 @@ class MonitorizeBackend(QObject):
 
     @pyqtProperty(str, notify=streamingStatusChanged)
     def streamingStatus(self):
-        return self.streaming.status
+        return self.remoteLoginMessage if getattr(self, "remoteLoginEnabled", False) else self.streaming.status
 
     @pyqtProperty(bool, notify=secondStreamActiveChanged)
     def secondStreamActive(self):
@@ -415,25 +546,78 @@ class MonitorizeBackend(QObject):
     def vkmsAvailabilityMessage(self):
         return self._vkms_status_message
 
+    @pyqtProperty(bool, notify=vkmsHelperAvailabilityChanged)
+    def vkmsInstallRequired(self):
+        return self._vkms_install_required
+
+    @pyqtProperty("QVariantList", notify=bootWifiChanged)
+    def bootWifiProfiles(self):
+        return self._boot_wifi_profiles
+
+    @pyqtProperty("QVariantMap", notify=bootWifiChanged)
+    def bootWifiStatus(self):
+        return self._boot_wifi_status
+
+    @pyqtProperty(bool, notify=bootWifiChanged)
+    def bootWifiBusy(self):
+        return bool(self._boot_wifi_client and self._boot_wifi_client.busy)
+
+    def _wifi_client(self):
+        if self._boot_wifi_client is None:
+            from monitorize.platform.networkmanager_boot_wifi import NetworkManagerBootWifi
+            client = self._boot_wifi_client = NetworkManagerBootWifi(self)
+            client.profilesChanged.connect(self._set_boot_wifi_profiles)
+            client.statusChanged.connect(self._set_boot_wifi_status)
+            client.busyChanged.connect(self.bootWifiChanged)
+            client.operationFinished.connect(self.bootWifiFinished)
+        return self._boot_wifi_client
+
+    def _set_boot_wifi_profiles(self, profiles):
+        self._boot_wifi_profiles = profiles
+        self.bootWifiChanged.emit()
+
+    def _set_boot_wifi_status(self, status):
+        self._boot_wifi_status = status
+        self.bootWifiChanged.emit()
+
+    @pyqtSlot(bool)
+    def setBootWifiPageVisible(self, visible):
+        if not self._closing and (visible or self._boot_wifi_client is not None):
+            self._wifi_client().set_visible(visible)
+
+    @pyqtSlot()
+    def refreshBootWifi(self):
+        if not self._closing:
+            self._wifi_client().refresh()
+
+    @pyqtSlot(str, str, str)
+    def configureBootWifi(self, uuid, version, password):
+        if not self._closing:
+            self._wifi_client().configure(uuid, version, password)
+
     @pyqtSlot()
     def refreshVkmsHelperAvailability(self):
         if self._vkms_check_running or self._closing:
             return
         self._vkms_check_running = True
         def check():
+            client = MonitorizeVkmsClient()
             try:
-                MonitorizeVkmsClient().require_ready()
-                result = (True, "")
+                client.require_ready()
+                result = (True, "", False)
             except Exception as exc:
-                result = (False, str(exc))
+                result = (False, str(exc), isinstance(exc, VkmsCliNotFoundError))
+            finally:
+                client.close()
             if not self._closing:
                 self._vkmsWorkerFinished.emit(*result)
         self._background_executor.submit(check)
 
-    def _finish_vkms_check(self, ready, message):
+    def _finish_vkms_check(self, ready, message, install_required=False):
         self._vkms_check_running = False
         self._vkms_helper_available = ready
         self._vkms_status_message = message
+        self._vkms_install_required = install_required
         self.vkmsHelperAvailabilityChanged.emit()
         pending, self._vkms_pending_start = self._vkms_pending_start, None
         self.sessionChanged.emit()
@@ -475,6 +659,7 @@ class MonitorizeBackend(QObject):
         self.streaming.streaming_backend = value
         save_general_settings(streaming_backend=value)
         self.streamingBackendChanged.emit(value)
+        self.clientDisplaySettingsChanged.emit()
 
     @pyqtSlot(result="QVariantMap")
     def getSystemSetupStatus(self):
@@ -497,16 +682,79 @@ class MonitorizeBackend(QObject):
         return self._system_setup_process is not None
 
     @pyqtSlot(bool, bool)
-    def startSystemSetup(self, enable_input: bool, enable_firewall: bool):
+    @pyqtSlot(bool, bool, bool)
+    def startSystemSetup(self, enable_input: bool, enable_firewall: bool, enable_vkms=False):
         if self._system_setup_process is not None:
             return
-        command, error = system_setup_command(enable_input, enable_firewall)
+        command, error = (system_setup_command(enable_input, enable_firewall, True) if enable_vkms
+                          else system_setup_command(enable_input, enable_firewall))
         if error:
             self.systemSetupFinished.emit(error)
             return
         process = QProcess(self)
         self._system_setup_timed_out = False
         self._system_setup_cancelled = False
+        self._system_setup_process = process
+        self.systemSetupRunningChanged.emit(True)
+        process.finished.connect(self._finish_system_setup)
+        process.errorOccurred.connect(self._system_setup_process_error)
+        process.start(command[0], command[1:])
+        if self._system_setup_process is process:
+            self._system_setup_timeout.start(60000)
+
+    @pyqtSlot()
+    def refreshVkmsAuthorization(self):
+        if self._closing or self._vkms_authorization_busy:
+            return
+        self._vkms_authorization_busy = True
+        def work():
+            from monitorize.platform.monitorize_vkms_dbus import VkmsServiceUnavailableError
+            result = None
+            for attempt in range(3):
+                client = MonitorizeVkmsClient()
+                try:
+                    result = client.get_authorization_state()
+                    break
+                except VkmsServiceUnavailableError as exc:
+                    result = {"success": False, "message": str(exc)}
+                    if attempt < 2:
+                        time.sleep(0.5 * (attempt + 1))
+                except Exception as exc:
+                    result = {"success": False, "message": str(exc)}
+                    break
+                finally:
+                    client.close()
+            self._vkmsAuthorizationWorkerFinished.emit(result)
+        self._background_executor.submit(work)
+
+    @pyqtSlot("QVariantMap")
+    def _finish_vkms_authorization(self, result):
+        self._vkms_authorization_busy = False
+        if not self._closing:
+            self.vkmsAuthorizationReady.emit(result)
+
+    @pyqtSlot(result='QVariantMap')
+    def getVkmsAuthorizationStatus(self):
+        from monitorize.platform.monitorize_vkms_dbus import MonitorizeVkmsClient
+        client = MonitorizeVkmsClient()
+        try:
+            return client.get_authorization_state()
+        except Exception as exc:
+            return {'success': False, 'message': str(exc)}
+        finally:
+            client.close()
+
+    @pyqtSlot(bool)
+    def setVkmsUnattended(self, enabled):
+        if self._system_setup_process is not None or self.session.active or self.session.busy:
+            return
+        from monitorize.platform.system_setup import vkms_authorization_command
+        command, error = vkms_authorization_command(enabled)
+        if error:
+            self.systemSetupFinished.emit(error)
+            return
+        process = QProcess(self)
+        self._system_setup_timed_out = self._system_setup_cancelled = False
         self._system_setup_process = process
         self.systemSetupRunningChanged.emit(True)
         process.finished.connect(self._finish_system_setup)
@@ -568,6 +816,23 @@ class MonitorizeBackend(QObject):
         self._sync_web_settings()
         return load_display_settings()
 
+    @pyqtSlot(result="QVariantMap")
+    def loadDisplayBehavior(self):
+        from monitorize.platform.session_layout import layout_supported
+        return {"value": load_general_settings().get('display_behavior', 'extend'),
+                "supported": layout_supported(self.streaming.de)}
+
+    @pyqtSlot(str, result=bool)
+    def saveDisplayBehavior(self, value):
+        from monitorize.platform.session_layout import MODES, layout_supported
+        if self.session.active or self.session.busy or value not in MODES:
+            return False
+        if value != 'extend' and not layout_supported(self.streaming.de):
+            return False
+        save_general_settings(display_behavior=value)
+        self.session.configuration_changed()
+        return True
+
     def _sync_web_settings(self):
         """Import webpage choices before Monitorize prepares a session or UI."""
         if not self._web_settings_enabled:
@@ -624,6 +889,7 @@ class MonitorizeBackend(QObject):
             "custom_h": primary["custom_h"],
             "fps": primary["fps"],
             "custom_fps": primary["custom_fps"],
+            "use_client_display_settings": primary["use_client_display_settings"],
         }]
         second = load_second_display_settings()
         if second.get("enabled", False):
@@ -634,17 +900,21 @@ class MonitorizeBackend(QObject):
                 "custom_h": second["custom_h"],
                 "fps": second["fps"],
                 "custom_fps": second["custom_fps"],
+                "use_client_display_settings": second["use_client_display_settings"],
             })
         return displays
 
     @pyqtSlot("QVariantList")
     def saveVirtualDisplaySettings(self, display_configs):
         """Persist one or two independent display-mode configurations."""
+        if self.isStreaming or self.sessionBusy:
+            return
         configs = [dict(config) for config in list(display_configs or []) if isinstance(config, dict)]
         if not configs:
             return
         configs = configs[:2]
-        mode_keys = ("resolution", "custom_w", "custom_h", "fps", "custom_fps")
+        mode_keys = ("resolution", "custom_w", "custom_h", "fps", "custom_fps",
+                     "use_client_display_settings")
 
         primary = load_display_settings()
         primary.update({key: configs[0].get(key, primary[key]) for key in mode_keys})
@@ -660,6 +930,7 @@ class MonitorizeBackend(QObject):
                 self.streaming.stop_third()
                 self.session.count = 1
         save_second_display_settings(**second)
+        self.clientDisplaySettingsChanged.emit()
 
         self.session.preset_configuration = None
         self.session.configuration_changed()
@@ -756,6 +1027,7 @@ class MonitorizeBackend(QObject):
             sunshine_gpu=sunshine_gpu,
             sunshine_codec=sunshine_codec,
             sunshine_capture=previous.get("sunshine_capture", "auto"),
+            use_client_display_settings=previous.get("use_client_display_settings", False),
             streaming_customized=streaming_customized,
             sunshine_native_pen_touch=sunshine_native_pen_touch,
             enable_audio=enable_audio,
@@ -914,7 +1186,11 @@ class MonitorizeBackend(QObject):
         self.sunshineChoicesSavingChanged.emit(False)
         if self._pending_session_start:
             self._pending_session_start = False
-            QTimer.singleShot(0, self.startSession)
+            generation = self._session_start_generation
+            def resume_start():
+                if not self._closing and generation == self._session_start_generation:
+                    self._start_session_checked()
+            QTimer.singleShot(0, resume_start)
 
     @pyqtSlot(int, bool, str)
     def _finish_sunshine_choices(self, request, success, message):
@@ -942,8 +1218,27 @@ class MonitorizeBackend(QObject):
     def saveGeneralSettings(self, minimize):
         save_general_settings(minimize_to_tray=minimize)
 
+    @pyqtProperty(bool, notify=clientDisplaySettingsChanged)
+    def clientDisplaySettingsAvailable(self):
+        primary = load_display_settings()
+        second = load_second_display_settings()
+        return (self.streamingBackend == "sunshine"
+                and (primary["display_type"] == "Mirror" or
+                     (primary["display_type"] == "Extend" and
+                      (primary["use_client_display_settings"] or
+                       (second["enabled"] and second["use_client_display_settings"])))))
+
+    @pyqtSlot(bool, bool)
+    def saveClientListenerSettings(self, listen_on_open, restart_on_crash):
+        if self.isStreaming or self.sessionBusy:
+            return
+        save_general_settings(client_listen_on_open=listen_on_open,
+                              client_restart_on_crash=restart_on_crash)
+
     @pyqtSlot(result=bool)
     def isAutostartEnabled(self):
+        if getattr(self, "remoteLoginEnabled", False):
+            return True
         return autostart.is_enabled()
 
     @pyqtSlot(bool, result=str)
@@ -981,6 +1276,13 @@ class MonitorizeBackend(QObject):
             return
         if self.isStreaming or self.sessionBusy:
             self.virtualDisplayCleanupFinished.emit(False, "Stop streaming before removing virtual displays")
+            return
+        from monitorize.streaming.recovery_guardian import recover_before_cleanup
+        try:
+            if not recover_before_cleanup():
+                raise RuntimeError('Display recovery is still running; owned outputs cannot be removed yet.')
+        except Exception as exc:
+            self.virtualDisplayCleanupFinished.emit(False, str(exc))
             return
         process = QProcess(self)
         process.setWorkingDirectory(LINUX_DIR)
@@ -1083,6 +1385,9 @@ class MonitorizeBackend(QObject):
     @pyqtSlot()
     @pyqtSlot(int)
     def openSunshineWebUi(self, instance: int = 1):
+        if getattr(self, "remoteLoginEnabled", False) and instance == 1:
+            QDesktopServices.openUrl(QUrl("https://localhost:47990"))
+            return
         if instance not in (1, 2) or self.sessionBusy or self._settings_instance is not None:
             return
         if not self._web_settings_enabled:
@@ -1171,6 +1476,10 @@ class MonitorizeBackend(QObject):
     @pyqtSlot(result="QVariantMap")
     @pyqtSlot(int, result="QVariantMap")
     def restartSunshine(self, instance: int = 1):
+        runtime = self.session.client_runtime
+        if runtime and instance in runtime.slots:
+            success = runtime.restart_slot(instance)
+            return {"success": success, "message": "Restarting listener." if success else runtime.error}
         success, message = restart_sunshine(instance)
         return {"success": success, "message": message}
 
@@ -1284,7 +1593,8 @@ class MonitorizeBackend(QObject):
             return "Invalid preset selection."
         if replace_index == -1 and len(self._presets) >= MAX_PRESETS:
             return "full"
-        preset = self.streaming.active_configuration()
+        preset = (self.session.configured_snapshot() if self.session.client_runtime and self.session.client_runtime.active
+                  else self.streaming.active_configuration())
         preset["name"] = name
         if replace_index >= 0:
             self._presets[replace_index] = preset
@@ -1300,24 +1610,34 @@ class MonitorizeBackend(QObject):
         self._launch_preset_checked(index)
 
     def _resume_vkms_preset(self, *_args):
-        if self._vkms_pending_preset is None or self.streaming._vkms_retiring or self._closing:
+        if self._vkms_pending_preset is None or self.streaming._vkms_retiring or self.session.retiring or self._closing:
             return
         index = self._vkms_pending_preset
         def resume():
-            if self._vkms_pending_preset == index and not self._closing:
+            if (self._vkms_pending_preset == index and not self._closing
+                    and not self.streaming._vkms_retiring and not self.session.retiring):
                 self._vkms_pending_preset = None
                 self._launch_preset_checked(index)
         QTimer.singleShot(0, resume)
 
     def _launch_preset_checked(self, index, checked=False):
+        if getattr(self, "remoteLoginEnabled", False):
+            self._set_preset_launch_status("Disable remote login at boot before starting a manual preset.")
+            return
         if self._closing:
             return
         if index < 0 or index >= len(self._presets):
             self._set_preset_launch_status("Preset no longer exists.")
             return
-        if self.streaming.streaming and self.streaming.virtual_display_creator == "vkms":
-            self.streaming.stop()
-        if self.streaming._vkms_retiring:
+        candidate = self._presets[index]
+        target_client = candidate.get("primary", {}).get("use_client_display_settings", False) or (
+            candidate.get("second", {}).get("enabled", False)
+            and candidate.get("second", {}).get("use_client_display_settings", False))
+        target_client = target_client or candidate.get('display_behavior', 'extend') != 'extend'
+        if ((self.session.client_runtime and self.session.client_runtime.active)
+                or (self.streaming.streaming and (target_client or self.streaming.virtual_display_creator == "vkms"))):
+            self.session.stop()
+        if self.streaming._vkms_retiring or self.session.retiring:
             self._vkms_pending_preset = index
             self._set_preset_launch_status("Stopping the previous VKMS session…")
             return
@@ -1347,6 +1667,10 @@ class MonitorizeBackend(QObject):
             return
         self._cancel_settings_open()
         self.session.preset_configuration = copy.deepcopy(preset)
+        self.session.count = 2 if preset.get("second", {}).get("enabled") else 1
+        if self.session.uses_managed_runtime():
+            self.session.start()
+            return
         self.streaming.start(
             primary["resolution"],
             primary["fps"],
@@ -1410,6 +1734,10 @@ class MonitorizeBackend(QObject):
         self._vkms_pending_preset = None
         self._vkms_pending_start = None
         self._closing = True
+        if self._remote_login is not None:
+            self._remote_login.close()
+        if self._boot_wifi_client is not None:
+            self._boot_wifi_client.close()
         self._background_executor.shutdown(wait=False, cancel_futures=True)
         if self._system_setup_process is not None:
             process = self._system_setup_process
@@ -1419,4 +1747,4 @@ class MonitorizeBackend(QObject):
             self._complete_system_setup({"success": False, "message": "System setup cancelled."})
         self._cancel_settings_open()
         self.network_timer.stop()
-        self.streaming.stop()
+        self.session.stop()

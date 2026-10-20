@@ -4,12 +4,31 @@ import QtQuick.Layouts
 
 Item {
     id: page
+    objectName: "startupSettingsPage"
+    property bool bootOptionsExpanded: false
     property bool settingsLoading: true
     property bool settingsMinimizeToTray: false
     property bool settingsAutostartEnabled: false
     property string settingsError: ""
+    property string startupNotice: ""
+    property int loginAfterBootDisable: -1
     property string sunshineResetMessage: ""
     property bool sunshineResetSucceeded: false
+    property var vkmsAuthorization: ({success: false})
+    property string vkmsAuthorizationMessage: ""
+    property bool vkmsChecking: false
+    property var bootStatus: ({available: false, enabled: false, supported: false})
+    function refreshAuthorization() {
+        vkmsChecking = true
+        backend.refreshVkmsAuthorization()
+    }
+    function refreshStartup() {
+        bootStatus = backend.getRemoteLoginSetupStatus()
+        settingsLoading = true
+        bootCheck.checked = bootStatus.enabled === true
+        autostartCheck.checked = bootStatus.enabled === true || backend.isAutostartEnabled()
+        settingsLoading = false
+    }
     Component.onCompleted: loadAppSettings()
     function loadAppSettings() {
         settingsLoading = true
@@ -18,8 +37,35 @@ Item {
         settingsAutostartEnabled = backend.isAutostartEnabled()
         minimizeTrayCheck.checked = settingsMinimizeToTray
         autostartCheck.checked = settingsAutostartEnabled
+        listenOnOpenCheck.checked = gen["client_listen_on_open"] === true
+        restartOnCrashCheck.checked = gen["client_restart_on_crash"] === true
         settingsError = ""
         settingsLoading = false
+        refreshStartup()
+        refreshAuthorization()
+    }
+
+    Connections {
+        target: backend
+        function onVkmsAuthorizationReady(result) {
+            page.vkmsChecking = false
+            page.vkmsAuthorization = result
+        }
+        function onRemoteLoginSetupFinished(result) {
+            page.settingsError = result.success ? "" : (result.message || "Startup setup failed.")
+            page.startupNotice = result.success && result.reboot_required ? "Startup settings saved. Reboot to apply the change." : ""
+            page.refreshStartup()
+            if (result.success && !page.bootStatus.enabled && page.loginAfterBootDisable >= 0) {
+                let error = backend.setAutostartEnabled(page.loginAfterBootDisable === 1)
+                if (error.length > 0) page.settingsError = error
+                page.refreshStartup()
+            }
+            page.loginAfterBootDisable = -1
+        }
+        function onSystemSetupFinished(result) {
+            page.vkmsAuthorizationMessage = result.success ? "" : (result.message || "Authorization failed.")
+            page.refreshAuthorization()
+        }
     }
 
     function saveAppSettings() {
@@ -28,8 +74,20 @@ Item {
         backend.saveGeneralSettings(settingsMinimizeToTray)
     }
 
+    function saveClientListenerSettings() {
+        if (settingsLoading) return
+        backend.saveClientListenerSettings(listenOnOpenCheck.checked, restartOnCrashCheck.checked)
+    }
+
     function saveAutostartSettings() {
         if (settingsLoading) return
+        if (!autostartCheck.checked && bootStatus.enabled) {
+            // Keep the dependency visible until administrator disable succeeds.
+            autostartCheck.checked = true
+            loginAfterBootDisable = 0
+            backend.configureRemoteLogin(false)
+            return
+        }
         settingsAutostartEnabled = autostartCheck.checked
         settingsError = backend.setAutostartEnabled(settingsAutostartEnabled)
         if (settingsError.length > 0) {
@@ -51,20 +109,101 @@ Item {
             SectionCard {
                 title: "GENERAL"; symbol: "settings"; Layout.fillWidth: true
                 CustomCheckBox {
+                    keepCheckedBlue: true
                     id: minimizeTrayCheck; text: "Minimize to tray on close"
                     Layout.fillWidth: true; onCheckedChanged: page.saveAppSettings()
                 }
-                CustomCheckBox {
-                    id: autostartCheck; text: "Start Monitorize after login"
-                    Layout.fillWidth: true; onCheckedChanged: page.saveAutostartSettings()
+                RowLayout {
+                    Layout.fillWidth: true
+                    CustomCheckBox {
+                        keepCheckedBlue: true
+                        id: autostartCheck; objectName: "loginStartupCheck"; text: "Start Monitorize after login"
+                        enabled: !backend.remoteLoginSetupBusy
+                        Layout.fillWidth: true; onClicked: page.saveAutostartSettings()
+                    }
+                    StartupHelp { helpText: "Starts Monitorize after you sign in and reach your desktop." }
+                    ToolButton {
+                        objectName: "bootStartupExpander"
+                        text: page.bootOptionsExpanded ? "⌃" : "⌄"
+                        enabled: autostartCheck.checked
+                        Accessible.name: "Show boot startup options"
+                        onClicked: page.bootOptionsExpanded = !page.bootOptionsExpanded
+                    }
+                }
+                RowLayout {
+                    id: bootOptions
+                    objectName: "bootStartupOptions"
+                    visible: autostartCheck.checked && page.bootOptionsExpanded
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 24
+                    CustomCheckBox {
+                        keepCheckedBlue: true
+                        id: bootCheck; objectName: "bootStartupCheck"; text: "Also start at boot (login screen)"
+                        Layout.fillWidth: true
+                        enabled: !backend.remoteLoginSetupBusy && page.bootStatus.available && (page.bootStatus.supported || page.bootStatus.enabled)
+                        onClicked: {
+                            page.loginAfterBootDisable = checked ? -1 : 1
+                            backend.configureRemoteLogin(checked)
+                        }
+                    }
+                    StartupHelp { helpText: "Makes Monitorize streaming available at the login screen.\nAfter signing in, reconnect to the same Moonlight PC. Desktop startup is included." }
+                }
+                Text {
+                    visible: autostartCheck.checked && page.bootOptionsExpanded && (!page.bootStatus.available || (!page.bootStatus.supported && !page.bootStatus.enabled))
+                    text: page.bootStatus.message || ""
+                    color: theme.textSecondary; Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
                 Text {
                     text: page.settingsError; visible: text.length > 0
                     color: "#fca5a5"; Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
+                Text {
+                    text: backend.remoteLoginSetupBusy ? "Applying startup settings… Complete any administrator authorization prompt." : page.startupNotice
+                    visible: text.length > 0
+                    color: theme.textSecondary; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
+                CustomCheckBox {
+                    keepCheckedBlue: true
+                    id: listenOnOpenCheck
+                    text: "Start listening when Monitorize launches"
+                    Layout.fillWidth: true
+                    enabled: backend.clientDisplaySettingsAvailable && !backend.isStreaming && !backend.sessionBusy
+                    onClicked: page.saveClientListenerSettings()
+                }
+                CustomCheckBox {
+                    keepCheckedBlue: true
+                    id: restartOnCrashCheck
+                    text: "Automatically restart Sunshine if it crashes"
+                    Layout.fillWidth: true
+                    enabled: backend.clientDisplaySettingsAvailable && !backend.isStreaming && !backend.sessionBusy
+                    onClicked: page.saveClientListenerSettings()
+                }
+
             }
             SectionCard {
                 title: "MISCELLANEOUS"; symbol: "extras"; Layout.fillWidth: true
+                SettingsActionRow {
+                    title: "Wi-Fi before login"
+                    description: "Configure a NetworkManager Wi-Fi profile to connect before desktop login."
+                    symbol: "settings"; actionText: "Configure"
+                    Layout.fillWidth: true
+                    onClicked: page.StackView.view.push("BootWifiSetupPage.qml")
+                }
+                SettingsActionRow {
+                    title: "Unattended VKMS displays"
+                    description: page.vkmsChecking ? "Checking authorization…" : page.vkmsAuthorizationMessage.length > 0 ? page.vkmsAuthorizationMessage : page.vkmsAuthorization.success
+                        ? (page.vkmsAuthorization.unattended_enabled ? "Enabled for your user. Display creation does not request a password." : "Authorize your user once for virtual display creation without recurring password prompts.")
+                        : (page.vkmsAuthorization.message || "Install or upgrade monitorize-vkms first.")
+                    symbol: "display"
+                    actionText: page.vkmsChecking ? "Checking…" : !page.vkmsAuthorization.success ? "Retry" : page.vkmsAuthorization.unattended_enabled ? "Disable" : "Enable"
+                    actionEnabled: !page.vkmsChecking && !backend.isStreaming && !backend.sessionBusy && !backend.systemSetupRunning
+                    Layout.fillWidth: true
+                    onClicked: {
+                        page.vkmsAuthorizationMessage = ""
+                        if (!page.vkmsAuthorization.success) page.refreshAuthorization()
+                        else backend.setVkmsUnattended(!page.vkmsAuthorization.unattended_enabled)
+                    }
+                }
                 SettingsActionRow {
                     title: "Reset Sunshine settings to defaults"
                     description: "Restore Sunshine settings to their default values."

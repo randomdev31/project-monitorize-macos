@@ -1,0 +1,67 @@
+"""Root-written session descriptor for a fixed non-root desktop engine unit."""
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import stat
+from .settings import validate_descriptor
+
+ROOT=Path('/run/monitorize-remote-login')
+
+
+class DescriptorStore:
+    def __init__(self,settings,output_finder,adopter,*,root=ROOT,owner_uid=0):
+        self.settings=settings;self.output_finder=output_finder;self.adopter=adopter
+        self.root=Path(root);self.owner_uid=owner_uid
+
+    def _directory(self,path,mode,gid=None):
+        try:
+            path.mkdir(mode=mode)
+            os.chmod(path,mode)
+            if os.geteuid()==0 and gid is not None:os.chown(path,0,gid)
+        except FileExistsError:pass
+        info=path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid!=self.owner_uid or info.st_mode & 0o022:
+            raise ValueError('Unsafe remote-login runtime directory.')
+        if gid is not None and info.st_gid!=gid:raise ValueError('Remote-login runtime group changed.')
+
+    def write(self,caller,generation,descriptor):
+        if caller['uid']!=self.settings.uid or not re.fullmatch(r'[0-9a-f]{32}',generation):
+            raise PermissionError('Invalid descriptor owner/generation.')
+        expected=self.output_finder()
+        values=validate_descriptor(descriptor,self.settings,expected)
+        # Validate before any compositor operation. Adopter rechecks active session,
+        # boot generation and full DRM identity under the VKMS lifecycle lock.
+        adopted=self.adopter(caller['uid'],caller['session'])
+        if adopted.get('connector')!=expected:raise RuntimeError('Boot output changed during adoption.')
+        self._directory(self.root,0o755)
+        directory=self.root/str(self.settings.uid)
+        self._directory(directory,0o750,self.settings.gid)
+        values.update(uid=self.settings.uid,session=caller['session'],generation=generation)
+        temporary=directory/('.desktop.'+secrets.token_hex(8))
+        try:
+            fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o640)
+            with os.fdopen(fd,'w') as stream:
+                os.fchmod(stream.fileno(),0o640)
+                if os.geteuid()==0:os.fchown(stream.fileno(),0,self.settings.gid)
+                json.dump(values,stream);stream.flush();os.fsync(stream.fileno())
+            os.replace(temporary,directory/'desktop.json')
+        finally:
+            if temporary.exists():temporary.unlink()
+        return values
+
+
+def read_descriptor(path,uid,*,owner_uid=0):
+    try:
+        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+        with os.fdopen(fd) as source:
+            info=os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=owner_uid or info.st_mode & 0o022 or info.st_size>16384:
+                raise ValueError()
+            result=json.load(source)
+        if result['uid']!=uid or not isinstance(result['session'],str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',result['session']):raise ValueError()
+        if not re.fullmatch(r'[0-9a-f]{32}',result['generation']):raise ValueError()
+        return result
+    except (OSError,KeyError,TypeError,ValueError):
+        raise ValueError('Desktop descriptor is unsafe or does not match its account.') from None

@@ -1,11 +1,12 @@
 """Session-page orchestration: saved cards, live displays, and stream startup."""
 
 import os
+import copy
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from monitorize.config import app_log
-from monitorize.config.settings import load_display_settings, load_second_display_settings
+from monitorize.config.settings import load_display_settings, load_second_display_settings, load_general_settings
 
 
 class Session(QObject):
@@ -14,6 +15,7 @@ class Session(QObject):
     def __init__(self, controller, parent=None):
         super().__init__(parent)
         self.controller = controller
+        self.client_runtime = None
         self.running = False
         self.start_requested = False
         self._driving = False
@@ -25,6 +27,89 @@ class Session(QObject):
         controller.statusChanged.connect(self._changed)
         controller.startFailed.connect(self._startup_failed)
 
+    @property
+    def active(self):
+        return (self.controller.streaming or bool(self.client_runtime and self.client_runtime.active)
+                or getattr(getattr(self.controller, "mirror_retry", None), "pending", False) is True)
+
+    @property
+    def ready(self):
+        if self.client_runtime and self.client_runtime.active:
+            return any(slot.status in ("waiting", "ready", "streaming", "reconnecting")
+                       for slot in self.client_runtime.slots.values())
+        return self.controller.streaming and self.controller.primary_ready
+
+    @property
+    def retiring(self):
+        return bool(self.client_runtime and getattr(self.client_runtime, "retiring", False))
+
+    def _client_changed(self):
+        self.running = self.active
+        self.changed.emit()
+
+    def _runtime(self):
+        if self.client_runtime is None:
+            from monitorize.desktop.client_display_runtime import ClientDisplayRuntime
+            self.client_runtime = ClientDisplayRuntime(self)
+            self.client_runtime.changed.connect(self._client_changed)
+            self.client_runtime.logAppended.connect(self.controller.logAppended)
+        return self.client_runtime
+
+    def has_client_cards(self):
+        if self.controller.streaming_backend == "none" or self.configuration()["display_type"] != "Extend":
+            return False
+        configs = [self.configuration()]
+        if self.count == 2:
+            configs.append(self.second_configuration())
+        return any(c.get("use_client_display_settings", False) for c in configs)
+
+    def display_behavior(self):
+        settings = self.preset_configuration if self.preset_configuration is not None else load_general_settings()
+        return settings.get('display_behavior', 'extend')
+
+    def uses_managed_runtime(self):
+        return self.has_client_cards() or (self.mode == 'Extend' and self.display_behavior() != 'extend')
+
+    def configured_snapshot(self):
+        """Save configured intent, including a listener that has no display yet."""
+        if self.preset_configuration:
+            return copy.deepcopy(self.preset_configuration)
+        primary, second = load_display_settings(), load_second_display_settings()
+        for raw in (primary, second):
+            values = self._saved_values(raw)
+            raw["resolution"], raw["fps"] = values["res"], values["fps"]
+        return {"version": 2, "primary": primary, "display_behavior": self.display_behavior(),
+                "second": {**second, "enabled": self.count == 2}}
+
+    def _start_client_cards(self, listeners_only=False):
+        if self.controller.streaming_backend == "none":
+            self.controller._set_status("Client display settings require Sunshine.")
+            return
+        if self.controller.streaming:
+            self.controller._set_status("Stop the current session before changing display settings.")
+            return
+        runtime = self._runtime()
+        general = load_general_settings()
+        configs = [(1, self.configuration())]
+        if self.count == 2:
+            configs.append((2, self.second_configuration()))
+        for instance, config in configs:
+            if instance in runtime.slots:
+                continue
+            requested = config.get("use_client_display_settings", False)
+            if listeners_only and not requested:
+                continue
+            config = {**config, "de": self.controller.de,
+                      "display_behavior": self.display_behavior(),
+                      "resolution": config["res"],
+                      "client_restart_on_crash": general.get("client_restart_on_crash", False)}
+            start = runtime.start_slot if requested else runtime.start_manual_slot
+            if not start(instance, config):
+                self.controller._set_status(str(runtime.error))
+                self.controller.startFailed.emit()
+        self.running = bool(runtime.active)
+        self.changed.emit()
+
     def _startup_failed(self):
         self.start_requested = False
         self.changed.emit()
@@ -32,12 +117,14 @@ class Session(QObject):
     @property
     def busy(self):
         c = self.controller
-        return bool(c._vkms_retiring) or self.start_requested or (c.streaming and not c.primary_ready) or (
+        return bool(self.client_runtime and self.client_runtime.busy) or self.retiring or bool(c._vkms_retiring) or self.start_requested or (c.streaming and not c.primary_ready) or (
             c.third_streaming and not c.third_ready
         )
 
     @property
     def mode(self):
+        if self.client_runtime and self.client_runtime.active:
+            return "Extend"
         if self.controller.streaming:
             return self.controller.display_type
         return self.configuration()["display_type"]
@@ -77,6 +164,7 @@ class Session(QObject):
         custom = saved.get("streaming_customized", False)
         return dict(
             res=res, fps=fps, display_type=saved.get("display_type", "Extend"),
+            use_client_display_settings=bool(saved.get("use_client_display_settings", False)),
             virtual_display_creator=(
                 virtual_display_creator or saved.get("virtual_display_creator", "native")
             ),
@@ -92,6 +180,7 @@ class Session(QObject):
     @staticmethod
     def _preset_values(saved):
         return dict(res=saved["resolution"], fps=saved["fps"],
+                    use_client_display_settings=bool(saved.get("use_client_display_settings", False)),
                     display_type=saved.get("display_type", "Extend"),
                     virtual_display_creator=(
                         saved.get("virtual_display_creator", "native")
@@ -106,7 +195,9 @@ class Session(QObject):
 
     def second_configuration(self):
         if self.preset_configuration and self.preset_configuration.get("second", {}).get("enabled"):
-            return self._preset_values(self.preset_configuration["second"])
+            config = self._preset_values(self.preset_configuration["second"])
+            config["virtual_display_creator"] = self.configuration()["virtual_display_creator"]
+            return config
         primary = self.configuration()
         return self._saved_values(
             load_second_display_settings(),
@@ -126,6 +217,7 @@ class Session(QObject):
             f"display_type={config.get('display_type')} creator={config.get('virtual_display_creator')} "
             f"vkms={config.get('virtual_display_creator') == 'vkms'}",
         )
+        config.pop("use_client_display_settings", None)
         self.controller.start(**config, options={"prepare_only": True})
 
     def _prepare_second(self):
@@ -135,6 +227,7 @@ class Session(QObject):
             f"Session display request (second): res={config.get('res')} fps={config.get('fps')} "
             f"vkms={self.configuration().get('virtual_display_creator') == 'vkms'}",
         )
+        config.pop("use_client_display_settings", None)
         config.pop("display_type")
         config.pop("mirror_output", None)
         config.pop("virtual_display_creator", None)
@@ -145,7 +238,7 @@ class Session(QObject):
         return 2
 
     def configuration_changed(self):
-        if not self.controller.streaming:
+        if not self.active:
             self.count = self._configured_display_count()
         self.changed.emit()
 
@@ -157,20 +250,40 @@ class Session(QObject):
 
     @property
     def pending_displays(self):
+        if self.client_runtime and self.client_runtime.active:
+            return len(self.client_runtime.slots) < self.count
         c = self.controller
         return self.mode == "Extend" and self.count > (
             int(c.streaming) + int(c.third_streaming)
         )
 
-    def start(self):
+    def start(self, *, listeners_only=False):
         if self.busy:
+            return
+        guardian = getattr(self.client_runtime, 'guardian', None)
+        owns_guardian = guardian and guardian.process and guardian.process.poll() is None
+        if not self.active and not owns_guardian:
+            from monitorize.streaming.recovery_guardian import recover_before_cleanup
+            try:
+                if not recover_before_cleanup():
+                    raise RuntimeError('Previous display recovery is still running. Wait before starting another session.')
+            except Exception as exc:
+                self.controller._set_status(str(exc))
+                self.controller.startFailed.emit()
+                return
+        if self.uses_managed_runtime():
+            self._start_client_cards(listeners_only)
+            return
+        if listeners_only:
             return
         if self.running:
             if self.pending_displays:
                 self._prepare_second()
             return
         if self.mode == "Mirror":
-            self.controller.start(**self.configuration())
+            config = self.configuration()
+            config.pop("use_client_display_settings", None)
+            self.controller.start(**config)
             return
         if not self.count:
             return
@@ -219,13 +332,15 @@ class Session(QObject):
     def stop(self):
         self.start_requested = False
         self.running = False
+        if self.client_runtime:
+            self.client_runtime.stop()
         self.controller.stop()
         self.controller._set_status("Stopping VKMS displays…" if self.controller._vkms_retiring else
                                     "Session stopped. Start to recreate your displays." if self.count else "Session stopped.")
         self.changed.emit()
 
     def remove(self, index):
-        if index < 0 or index >= self.count or self.busy:
+        if index < 0 or index >= self.count or self.busy or (self.client_runtime and self.client_runtime.active):
             return False
         if index == 1 and self.controller.third_streaming:
             self.controller.stop_third()
@@ -243,6 +358,25 @@ class Session(QObject):
 
     def cards(self):
         c = self.controller
+        if self.client_runtime and self.client_runtime.active:
+            states = {"waiting": "Waiting for client", "preparing": "Preparing display…",
+                      "ready": "Display ready — starting stream", "streaming": "Streaming",
+                      "reconnecting": "Waiting for reconnect", "recovering": "Recovering host…",
+                      "starting": "Starting host…", "stopping": "Stopping…", "error": "Error"}
+            live = {card["instance"]: card for card in self.client_runtime.cards}
+            result = []
+            for instance in range(1, self.count + 1):
+                card = live.get(instance, {})
+                target = card.get("target", {})
+                state = states.get(card.get("status"), "Not started")
+                if card.get("error"):
+                    state += ": " + card["error"]
+                if target:
+                    state += f" — {target['width']} × {target['height']} @ {target['fps']:g} Hz"
+                result.append(dict(number=instance, title=f"Monitorize — Display {instance}",
+                    mirror=False, state=state, live=card.get("status") == "streaming",
+                    address=f"{c.local_ip}:{47989 if instance == 1 else 49089}"))
+            return result
         if self.mode == "Mirror":
             configured_output = str(
                 self.configuration().get("mirror_output") or ""

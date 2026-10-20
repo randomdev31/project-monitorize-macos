@@ -32,9 +32,14 @@ Item {
         }
     }
 
+    ScrollView {
+        id: setupScroll
+        anchors.fill: parent
+        clip: true
+        contentWidth: availableWidth
     ColumnLayout {
-        anchors.centerIn: parent
-        width: Math.min(parent.width - 40, 500)
+        width: Math.min(setupScroll.availableWidth - 32, 500)
+        x: (setupScroll.availableWidth - width) / 2
         spacing: 16
 
         Text {
@@ -46,7 +51,7 @@ Item {
         }
 
         Text {
-            text: "Select the system changes to authorize. Monitorize will request your system password once."
+            text: "Select the system changes to authorize. Administrator authorization may be requested. Wi-Fi setup uses NetworkManager authorization separately."
             color: theme.textSecondary
             font.pixelSize: 13
             wrapMode: Text.WordWrap
@@ -74,6 +79,7 @@ Item {
                     Layout.fillWidth: true
                 }
 
+
                 Text {
                     text: "Adds your user to monitorize-input for /dev/uinput. Log out and back in afterward."
                     color: theme.cardTextMuted
@@ -81,6 +87,18 @@ Item {
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                     leftPadding: 24
+                }
+
+                CustomCheckBox {
+                    id: unattendedVkmsCheck
+                    text: "Enable unattended VKMS displays"
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: "Allows processes running as your user to manage your Monitorize VKMS displays without further password prompts. Requires monitorize-vkms on the host."
+                    color: theme.textMuted
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
                 }
 
                 CustomCheckBox {
@@ -135,12 +153,20 @@ Item {
 
             CustomButton {
                 text: applying ? "Authorizing…" : "Authorize and finish setup"
-                enabled: setupAvailable && !applying && (inputCheck.checked || firewallCheck.checked)
+                enabled: setupAvailable && !applying && (inputCheck.checked || firewallCheck.checked || unattendedVkmsCheck.checked)
                 onClicked: {
                     applying = true
-                    backend.startSystemSetup(inputCheck.checked, firewallCheck.checked)
+                    backend.startSystemSetup(inputCheck.checked, firewallCheck.checked, unattendedVkmsCheck.checked)
                 }
             }
         }
+        CustomButton {
+            text: "Configure Wi-Fi before login…"
+            visible: !page.firstRun
+            primary: false
+            enabled: !page.applying
+            onClicked: page.StackView.view.push("BootWifiSetupPage.qml")
+        }
+    }
     }
 }

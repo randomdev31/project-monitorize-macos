@@ -42,10 +42,17 @@ class MonitorizeWindow(QMainWindow):
             self.setWindowIcon(self.app_icon)
         else:
             self.app_icon = QIcon()
-        kill_patterns(
-            "monitorize\\.streaming\\.headless_virtual_display",
-            "monitorize-kde-virtual-output",
-        )
+        from monitorize.streaming.recovery_guardian import recover_before_cleanup
+        try:
+            recovery_clear = recover_before_cleanup()
+        except Exception as exc:
+            recovery_clear = False
+            app_log.write('DISPLAY', f'Display recovery is pending: {exc}')
+        if recovery_clear:
+            kill_patterns(
+                "monitorize\\.streaming\\.headless_virtual_display",
+                "monitorize-kde-virtual-output",
+            )
         self.de = detect_desktop_environment()
         self.backend = MonitorizeBackend(self.de, self)
         self.backend.native_compositor_resolver = self._ask_desktop_environment
@@ -131,7 +138,7 @@ class MonitorizeWindow(QMainWindow):
         self._finish_quit_when_displays_stop()
 
     def _finish_quit_when_displays_stop(self):
-        if self.backend.streaming._vkms_retiring:
+        if self.backend.streaming._vkms_retiring or self.backend.session.retiring:
             QTimer.singleShot(250, self._finish_quit_when_displays_stop)
             return
         app_log.close()
@@ -140,7 +147,7 @@ class MonitorizeWindow(QMainWindow):
     def _quit_to_tray_agent(self):
         result = QProcess.startDetached(
             sys.executable,
-            ["-m", "monitorize", "--tray-agent"],
+            ["-m", "monitorize", "--tray-agent", "--restore-from-tray"],
             LINUX_DIR,
         )
         started = result[0] if isinstance(result, tuple) else result
@@ -171,7 +178,7 @@ class MonitorizeWindow(QMainWindow):
     def closeEvent(self, event):
         minimize = self.backend.should_minimize_to_tray()
         if minimize and QSystemTrayIcon.isSystemTrayAvailable():
-            idle = not self.backend.isStreaming
+            idle = not self.backend.isStreaming and not getattr(self.backend, "remoteLoginEnabled", False)
             if idle and self._quit_to_tray_agent():
                 event.accept()
                 return
@@ -269,7 +276,9 @@ def _launch_preset_index(argv):
 
 
 def _show_initial_window(window, start_in_tray):
-    if start_in_tray and QSystemTrayIcon.isSystemTrayAvailable():
+    if start_in_tray:
+        # At graphical login KDE may register its tray after this process. Qt
+        # registers a visible tray icon when the host appears; keep the window hidden.
         QApplication.setQuitOnLastWindowClosed(False)
         window.tray.show()
         app_log.write("APP", "Started hidden in system tray.")
@@ -299,6 +308,10 @@ def _instance_command(start_in_tray, preset_index):
     return b"noop" if start_in_tray else b"show"
 
 
+def _should_start_configured_listeners(argv, restored_from_tray=False):
+    return not restored_from_tray and '--restore-from-tray' not in argv
+
+
 def main():
     start_in_tray = _start_in_tray_requested(sys.argv)
     preset_index = _launch_preset_index(sys.argv)
@@ -311,6 +324,8 @@ def main():
     socket = QLocalSocket()
     socket.connectToServer("monitorize")
     if socket.waitForConnected(250):
+        from monitorize.desktop.tray_agent import dismiss_tray_agent
+        dismiss_tray_agent()
         app_log.write("APP", "Existing instance activated.")
         socket.write(_instance_command(start_in_tray, preset_index))
         socket.waitForBytesWritten(250)
@@ -322,13 +337,19 @@ def main():
         app_log.write("APP", "Failed to create single-instance server.")
         return
     _set_palette(app)
+    from monitorize.desktop.tray_agent import dismiss_tray_agent
+    restored_from_tray = dismiss_tray_agent()
     window = MonitorizeWindow()
+    # QML bindings must be destroyed while their context backend still exists.
+    app.aboutToQuit.connect(lambda: window.quick_widget.setSource(QUrl()))
     server.newConnection.connect(
         lambda: _handle_instance_command(server, window)
     )
     _show_initial_window(window, start_in_tray)
     if preset_index is not None:
         QTimer.singleShot(0, lambda: window.backend.launchPreset(preset_index))
+    elif _should_start_configured_listeners(sys.argv, restored_from_tray):
+        QTimer.singleShot(0, window.backend.startConfiguredListeners)
     sys.exit(app.exec())
 
 

@@ -1,5 +1,6 @@
 import json
 import subprocess
+import runpy
 import unittest
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
@@ -12,6 +13,25 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class SystemSetupTest(unittest.TestCase):
+    def test_new_firewall_profile_is_reloaded_before_adding_service(self):
+        from unittest.mock import Mock
+        namespace=runpy.run_path(str(ROOT/'packaging/common/monitorize-system-setup'))
+        function=namespace['enable_firewall'];glob=function.__globals__
+        run=Mock(side_effect=['ssh', '', 'ssh monitorize', '', ''])
+        with patch.dict(glob,command_path=lambda *args:'/usr/bin/firewall-cmd',run=run),patch.object(glob['subprocess'],'run',return_value=subprocess.CompletedProcess([],0,'running','')):
+            self.assertIn('allows Monitorize',function())
+        self.assertEqual(run.call_args_list[1].args[0],['/usr/bin/firewall-cmd','--reload'])
+        self.assertEqual(run.call_args_list[3].args[0],['/usr/bin/firewall-cmd','--permanent','--add-service=monitorize'])
+
+    def test_missing_firewall_profile_has_actionable_error_without_opening_ports(self):
+        from unittest.mock import Mock
+        namespace=runpy.run_path(str(ROOT/'packaging/common/monitorize-system-setup'))
+        function=namespace['enable_firewall'];glob=function.__globals__
+        run=Mock(return_value='ssh')
+        with patch.dict(glob,command_path=lambda *args:'/usr/bin/firewall-cmd',run=run),patch.object(glob['subprocess'],'run',return_value=subprocess.CompletedProcess([],0,'running','')):
+            with self.assertRaisesRegex(RuntimeError,'monitorize.xml'):function()
+        self.assertFalse(any('--add-service=monitorize' in call.args[0] for call in run.call_args_list))
+
     def test_missing_agent_error_explains_how_to_restore_the_prompt(self):
         for detail in (
             "No authentication agent found.",

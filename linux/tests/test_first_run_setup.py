@@ -59,7 +59,7 @@ class FirstRunSetupTest(unittest.TestCase):
 
     def test_session_running_follows_ready_controller_even_without_session_flag(self):
         controller = SimpleNamespace(streaming=True, primary_ready=True)
-        backend = SimpleNamespace(streaming=controller)
+        backend = SimpleNamespace(streaming=controller, session=SimpleNamespace(client_runtime=None))
         self.assertTrue(MonitorizeBackend.sessionRunning.fget(backend))
         controller.primary_ready = False
         self.assertFalse(MonitorizeBackend.sessionRunning.fget(backend))
@@ -214,7 +214,8 @@ class FirstRunSetupTest(unittest.TestCase):
         backend.streaming._vkms_retiring = {}
         self.addCleanup(backend.close)
         with patch("monitorize.desktop.backend.MonitorizeVkmsClient") as client:
-            for failure in (RuntimeError("Upgrade and reboot"), None):
+            from monitorize.platform.monitorize_vkms_dbus import VkmsServiceUnavailableError, VkmsCliNotFoundError
+            for failure in (VkmsCliNotFoundError(), VkmsServiceUnavailableError('Service disconnected'), RuntimeError("Upgrade and reboot"), None):
                 client.return_value.require_ready.side_effect = failure
                 loop=QEventLoop()
                 backend.vkmsHelperAvailabilityChanged.connect(loop.quit)
@@ -222,6 +223,8 @@ class FirstRunSetupTest(unittest.TestCase):
                 QTimer.singleShot(1000,loop.quit)
                 loop.exec()
                 self.assertEqual(backend.vkmsHelperAvailable,failure is None)
+                self.assertEqual(backend.vkmsInstallRequired, isinstance(failure, VkmsCliNotFoundError))
+                self.assertEqual(backend.vkmsAvailabilityMessage, '' if failure is None else str(failure))
             client.return_value.is_available.assert_not_called()
 
     @patch("monitorize.desktop.backend.apply_system_setup", return_value={"success": False, "message": "Cancelled"})
@@ -402,7 +405,7 @@ class FirstRunSetupTest(unittest.TestCase):
         self.assertIn("backend.markSystemSetupDecided()", main)
         self.assertIn("property bool firstRun: false", setup)
         self.assertIn("if (page.statusSucceeded && page.firstRun)", setup)
-        self.assertIn("backend.startSystemSetup(inputCheck.checked, firewallCheck.checked)", setup)
+        self.assertIn("backend.startSystemSetup(inputCheck.checked, firewallCheck.checked, unattendedVkmsCheck.checked)", setup)
         self.assertNotIn("Finish system setup", main)
         self.assertIn("visible: backend.canConfigureDisplay", streaming)
 

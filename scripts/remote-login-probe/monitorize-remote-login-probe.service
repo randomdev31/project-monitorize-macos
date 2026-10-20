@@ -1,0 +1,15 @@
+[Unit]
+Description=Experimental fixed VKMS output for remote-login validation
+Requires=monitorize-vkms-bootstrap.service
+After=monitorize-vkms-bootstrap.service systemd-logind.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/monitorize-remote-login-probe
+RemainAfterExit=yes
+TimeoutStartSec=15
+# Intentionally no ExecStop: never unplug a display currently used by a greeter.
+
+[Install]
+WantedBy=graphical.target

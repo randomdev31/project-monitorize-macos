@@ -39,6 +39,7 @@ sha256sums=(
 
 prepare() {
     cd "${srcdir}/monitorize-${pkgver}"
+    python packaging/common/check-client-display-protocol.py external/sunshine
     patch --batch --forward -d external/sunshine -p1 \
         < packaging/sunshine-strict-selection.patch
     patch --batch --forward -d external/sunshine -p1 \
@@ -161,6 +162,7 @@ PYTHON
 package() {
     cd "${srcdir}/monitorize-${pkgver}"
     python -m installer --destdir="${pkgdir}" dist/*.whl
+    python packaging/remote-login/install-assets.py --destdir "${pkgdir}"
 
     install -Dpm 0755 "${startdir}/monitorize-wrapper" \
         "${pkgdir}/usr/bin/monitorize"

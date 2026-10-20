@@ -35,11 +35,13 @@ def _get_settings() -> QSettings:
         pass
     settings = QSettings(CONFIG_FILE, QSettings.Format.IniFormat)
     if any(key.startswith("General/") for key in settings.allKeys()):
-        minimize = settings.value("General/minimize_to_tray", False, type=bool)
-        setup_decided = settings.value("General/system_setup_decided", False, type=bool)
+        # INI group casing may return as General in a fresh process, even after
+        # writing general. Preserve every key, including newer preferences.
+        previous = {key[len('General/'):]: settings.value(key)
+                    for key in settings.allKeys() if key.startswith('General/')}
         settings.remove("General")
-        settings.setValue("general/minimize_to_tray", minimize)
-        settings.setValue("general/system_setup_decided", setup_decided)
+        for key, value in previous.items():
+            settings.setValue('general/' + key, value)
         settings.sync()
     return settings
 
@@ -74,18 +76,27 @@ def _load_group(group: str, defaults: dict, bool_keys=()) -> dict:
 def save_general_settings(*, minimize_to_tray: bool | None = None,
                           system_setup_decided: bool | None = None,
                           streaming_backend: str | None = None,
-                          sunshine_web_settings_enabled: bool | None = None):
+                          sunshine_web_settings_enabled: bool | None = None,
+                          client_listen_on_open: bool | None = None,
+                          client_restart_on_crash: bool | None = None,
+                          display_behavior: str | None = None):
     values = {
         "minimize_to_tray": (
             bool(minimize_to_tray) if minimize_to_tray is not None else None
         ),
         "system_setup_decided": system_setup_decided,
         "sunshine_web_settings_enabled": sunshine_web_settings_enabled,
+        "client_listen_on_open": client_listen_on_open,
+        "client_restart_on_crash": client_restart_on_crash,
     }
     if streaming_backend is not None:
         values["streaming_backend"] = (
             streaming_backend if streaming_backend in ("sunshine", "none") else "sunshine"
         )
+    if display_behavior is not None:
+        if display_behavior not in ('extend', 'primary', 'virtual_only'):
+            raise ValueError('Unsupported display behavior.')
+        values['display_behavior'] = display_behavior
     _save_group("general", values)
 
 
@@ -94,11 +105,15 @@ def load_general_settings() -> dict:
         "general",
         {"minimize_to_tray": False, "system_setup_decided": False,
          "sunshine_web_settings_enabled": False,
-         "streaming_backend": "sunshine"},
-        ("minimize_to_tray", "system_setup_decided", "sunshine_web_settings_enabled"),
+         "client_listen_on_open": False, "client_restart_on_crash": False,
+         "streaming_backend": "sunshine", "display_behavior": "extend"},
+        ("minimize_to_tray", "system_setup_decided", "sunshine_web_settings_enabled",
+         "client_listen_on_open", "client_restart_on_crash"),
     )
     if data.get("streaming_backend") not in ("sunshine", "none"):
         data["streaming_backend"] = "sunshine"
+    if data.get('display_behavior') not in ('extend', 'primary', 'virtual_only'):
+        data['display_behavior'] = 'extend'
     return data
 
 
@@ -118,6 +133,7 @@ DISPLAY_DEFAULTS = {
     "sunshine_native_pen_touch": True,
     "mirror_output": "",
     "enable_audio": False,
+    "use_client_display_settings": False,
 }
 
 
@@ -152,6 +168,7 @@ def _normalize_display_settings(data, fallback=DEFAULT_PRIMARY_RESOLUTION):
         data.get("sunshine_native_pen_touch", True)
     )
     data["enable_audio"] = bool(data.get("enable_audio", False))
+    data["use_client_display_settings"] = bool(data.get("use_client_display_settings", False))
     data["mirror_output"] = str(data.get("mirror_output") or "")
     return data
 
@@ -180,6 +197,7 @@ def save_display_settings(
     streaming_customized=False,
     sunshine_native_pen_touch=True,
     enable_audio=False,
+    use_client_display_settings=False,
     mirror_output="",
 ):
     values = _normalize_display_settings(locals())
@@ -196,7 +214,7 @@ def load_display_settings() -> dict:
         legacy = _load_group(
             "wifi",
             DISPLAY_DEFAULTS,
-            ("sunshine_native_pen_touch", "enable_audio"),
+            ("sunshine_native_pen_touch", "enable_audio", "use_client_display_settings"),
         )
         values = _normalize_display_settings(legacy)
         _save_group("display", values)
@@ -205,7 +223,7 @@ def load_display_settings() -> dict:
         _load_group(
             group,
             DISPLAY_DEFAULTS,
-            ("streaming_customized", "sunshine_native_pen_touch", "enable_audio"),
+            ("streaming_customized", "sunshine_native_pen_touch", "enable_audio", "use_client_display_settings"),
         )
     )
 
@@ -227,7 +245,7 @@ def load_second_display_settings() -> dict:
     values = _load_group(
         "second_display",
         SECOND_DISPLAY_DEFAULTS,
-        ("streaming_customized", "sunshine_native_pen_touch", "enable_audio", "enabled"),
+        ("streaming_customized", "sunshine_native_pen_touch", "enable_audio", "enabled", "use_client_display_settings"),
     )
     return _normalize_display_settings(values, DEFAULT_SECONDARY_RESOLUTION)
 
@@ -255,6 +273,7 @@ def _normalize_session(raw: dict, fallback=DEFAULT_PRIMARY_RESOLUTION):
             raw.get("sunshine_native_pen_touch", True)
         ),
         "enable_audio": bool(raw.get("enable_audio", False)),
+        "use_client_display_settings": bool(raw.get("use_client_display_settings", False)),
         "mirror_output": str(raw.get("mirror_output") or ""),
     }
 
@@ -306,6 +325,7 @@ def _normalize_preset(raw: dict) -> dict | None:
     return {
         "version": PRESET_VERSION,
         "name": name,
+        "display_behavior": raw.get('display_behavior') if raw.get('display_behavior') in ('extend', 'primary', 'virtual_only') else 'extend',
         "primary": primary,
         "second": second,
     }

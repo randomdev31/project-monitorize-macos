@@ -56,6 +56,64 @@ class UiAsyncTest(unittest.TestCase):
             self.app.processEvents()
             launch.assert_not_called()
 
+    def test_preset_waits_for_client_holder_cleanup_and_stop_cancels_restart(self):
+        from types import SimpleNamespace
+        backend = self.make_backend()
+        backend.session.client_runtime = SimpleNamespace(active=False, busy=False,
+            retiring={1: object()}, stop=lambda: None)
+        backend._presets = [{"primary": {"display_type": "Extend"}}]
+        backend.launchPreset(0)
+        self.assertEqual(backend._vkms_pending_preset, 0)
+        backend.streaming.start.assert_not_called()
+        backend.stopSession()
+        self.assertIsNone(backend._vkms_pending_preset)
+
+    def test_switching_native_manual_session_to_listener_preset_stops_previous_host(self):
+        from types import SimpleNamespace
+        from monitorize.config.settings import _normalize_preset
+        backend = self.make_backend()
+        backend._streaming_backend = "sunshine"
+        backend.streaming.streaming_backend = "sunshine"
+        backend.streaming.streaming = True
+        backend.streaming.virtual_display_creator = "native"
+        backend.streaming.de = "sway"
+        backend.streaming.stop.side_effect = lambda: setattr(backend.streaming, "streaming", False)
+        runtime = Mock(active=False, busy=False, retiring={})
+        runtime.slots = {}
+        def start_slot(instance, config):
+            runtime.slots[instance] = SimpleNamespace(status="waiting", config=config)
+            runtime.active = True
+            return True
+        runtime.start_slot.side_effect = start_slot
+        backend.session.client_runtime = runtime
+        backend._presets = [_normalize_preset({"name": "Remote", "version": 2,
+            "primary": {"resolution": "1920x1080", "fps": "60",
+                        "use_client_display_settings": True}, "second": {"enabled": False}})]
+        with patch.object(backend, "_sync_web_settings"), patch.object(backend, "ensureNativeCompositor", return_value=True):
+            backend.launchPreset(0)
+        backend.streaming.stop.assert_called_once()
+        self.assertEqual(set(runtime.slots), {1})
+
+    def test_pending_auto_start_keeps_listener_only_and_stop_cancels_callback(self):
+        backend = self.make_backend()
+        backend._pending_session_start = True
+        backend._pending_listeners_only = True
+        with patch("monitorize.desktop.backend.QTimer.singleShot") as schedule:
+            backend._launch_next_sunshine_save()
+            callback = schedule.call_args.args[1]
+        with patch.object(backend, "_start_session_checked") as start:
+            callback()
+            start.assert_called_once()
+            self.assertTrue(backend._pending_listeners_only)
+        backend._pending_session_start = True
+        with patch("monitorize.desktop.backend.QTimer.singleShot") as schedule:
+            backend._launch_next_sunshine_save()
+            callback = schedule.call_args.args[1]
+        backend.stopSession()
+        with patch.object(backend, "_start_session_checked") as start:
+            callback()
+            start.assert_not_called()
+
     def test_vkms_preflight_does_not_block_and_stop_cancels_pending_start(self):
         backend = self.make_backend()
         gate = threading.Event()
