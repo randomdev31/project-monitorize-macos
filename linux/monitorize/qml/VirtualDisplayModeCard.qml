@@ -218,14 +218,14 @@ Rectangle {
                     id: customWidth
                     Layout.fillWidth: true
                     placeholderText: "Width"; maximumLength: 4
-                    onEditingFinished: card.commitCurrentMode()
+                    onTextEdited: card.commitCurrentMode()
                 }
                 Text { text: "×"; color: theme.textSecondary }
                 CustomTextField {
                     id: customHeight
                     Layout.fillWidth: true
                     placeholderText: "Height"; maximumLength: 4
-                    onEditingFinished: card.commitCurrentMode()
+                    onTextEdited: card.commitCurrentMode()
                 }
             }
             CustomTextField {
@@ -233,7 +233,7 @@ Rectangle {
                 visible: refresh.currentText === "Custom..." && !card.clientRequested
                 Layout.fillWidth: true
                 placeholderText: "24–240"; maximumLength: 3
-                onEditingFinished: card.commitCurrentMode()
+                onTextEdited: card.commitCurrentMode()
             }
         }
         SunshineDisplayCard {

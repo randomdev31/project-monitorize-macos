@@ -33,11 +33,11 @@ Item {
                     color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 Text {
-                    text: "Initial integration: Plasma Login Manager, a reserved 1920×1080 display and software encoding. Manual display settings are retained for use when remote login is disabled."
+                    text: "Plasma Login Manager and experimental SDDM/GDM Wayland adapters use a reserved 1920×1080 login display. Desktop settings are applied after login; compositor-specific limitations appear in diagnostics."
                     color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 Text {
-                    text: "Setup keeps pairing in protected system storage and starts Monitorize's desktop controller after login. Wi-Fi configuration is a separate step. Reboot after enabling or disabling."
+                    text: "Setup keeps pairing in protected system storage and starts Monitorize's desktop controller after login. Wi-Fi configuration is a separate step. Reboot after enabling; disabling releases ownership for ordinary desktop streaming."
                     color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 CustomCheckBox {

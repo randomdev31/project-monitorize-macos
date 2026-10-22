@@ -18,6 +18,9 @@ def settle():
     loop=QEventLoop();QTimer.singleShot(100,loop.quit);loop.exec()
 with tempfile.TemporaryDirectory() as d:
     os.environ['XDG_CONFIG_HOME']=d
+    import monitorize.config.settings as isolated_settings
+    isolated_settings.CONFIG_DIR=d
+    isolated_settings.CONFIG_FILE=str(__import__('pathlib').Path(d)/'settings.ini')
     with patch('monitorize.desktop.remote_login_runtime.SETTINGS',__import__('pathlib').Path(d)/'absent'), \
          patch('monitorize.desktop.backend.get_local_ip',return_value='192.0.2.1'), \
          patch('monitorize.desktop.backend.find_sunshine_command',return_value=None), \
@@ -40,6 +43,21 @@ with tempfile.TemporaryDirectory() as d:
                 value=e.evaluate();assert not e.hasError(),e.error().toString();return value
             settle();evaluate('navigate("SettingsPage.qml")');settle();settle()
             assert view.status()==QQuickWidget.Status.Ready
+            # Leaving a Settings subpage must discard its navigation history.
+            nav=view.rootObject().findChild(QObject,'mainStack')
+            expression=QQmlExpression(view.rootContext(),nav,'push("BootWifiSetupPage.qml")')
+            expression.evaluate();assert not expression.hasError(),expression.error().toString()
+            settle();settle()
+            evaluate('navigate("DisplaySetupPage.qml")');settle();settle()
+            assert nav.property('depth') == 1
+            assert not view.rootObject().findChild(QObject,'globalBackButton').property('visible')
+            evaluate('navigate("SettingsPage.qml")');settle();settle()
+            nav=view.rootObject().findChild(QObject,'mainStack')
+            expression=QQmlExpression(view.rootContext(),nav,'push("BootWifiSetupPage.qml")')
+            expression.evaluate();assert not expression.hasError(),expression.error().toString()
+            settle();settle()
+            evaluate('navigate("SettingsPage.qml")');settle();settle()
+            assert nav.property('depth') == 1
             # Accent selection is opt-in, live, and independent of light/dark.
             import monitorize.config.settings as appearance_settings
             from PyQt6.QtGui import QColor

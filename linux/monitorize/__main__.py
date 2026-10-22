@@ -25,7 +25,7 @@ def _use_light_tray(argv):
         return False
     if '--restore-from-tray' in argv:
         return True
-    return not load_general_settings().get('client_listen_on_open', False)
+    return load_general_settings().get('streaming_backend', 'sunshine') == 'none'
 
 
 def main():

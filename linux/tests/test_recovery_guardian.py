@@ -55,6 +55,30 @@ class GuardianProtocolTest(unittest.IsolatedAsyncioTestCase):
         await writer.wait_closed()
         return reply
 
+    async def test_borrowed_owner_death_restores_without_removing_output(self):
+        self.backend.state.append(output('Virtual-1',2))
+        self.assertTrue((await self.command(operation='attach',slot=1,name='Virtual-1'))['ok'])
+        self.assertTrue((await self.command(operation='stream',slot=1,active=True))['ok'])
+        self.guardian.owner=-1
+        await asyncio.wait_for(self.guardian.supervise(),2)
+        self.assertTrue(self.backend.state[0]['enabled'])
+        self.assertTrue(self.backend.state[1]['enabled'])
+        self.assertFalse(self.guardian.reserved)
+
+    async def test_borrowed_remote_output_restores_without_destroying_it(self):
+        self.backend.state.append(output('Virtual-1',2))
+        result=await self.command(operation='attach',slot=1,name='Virtual-1')
+        self.assertTrue(result['ok'],result)
+        self.assertNotIn('Virtual-1',[s['name'] for s in self.layout.snapshot])
+        result=await self.command(operation='stream',slot=1,active=True)
+        self.assertTrue(result['ok'],result)
+        self.assertFalse(self.backend.state[0]['enabled'])
+        result=await self.command(operation='detach',slot=1)
+        self.assertTrue(result['ok'],result)
+        self.assertTrue(self.backend.state[0]['enabled'])
+        self.assertTrue(self.backend.state[1]['enabled'])
+        self.assertFalse(self.guardian.reserved)
+
     async def hold(self, slot=1):
         reader, writer = await asyncio.open_unix_connection(self.path)
         self.relays.append(writer)

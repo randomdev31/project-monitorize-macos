@@ -256,7 +256,7 @@ Item {
             Flow {
                 Layout.fillWidth: true
                 spacing: 10
-                CustomButton { text: "Pair Moonlight PIN"; iconSymbol: "link"; implicitHeight: 46; primary: false; visible: backend.streamingBackend !== "none"; enabled: backend.sessionRunning && !backend.sessionBusy; onClicked: page.openPair(1) }
+                CustomButton { text: "Pair Moonlight PIN"; iconSymbol: "link"; implicitHeight: 46; primary: false; visible: backend.appliedStreamingBackend !== "none"; enabled: backend.sessionRunning && !backend.sessionBusy; onClicked: page.openPair(1) }
                 CustomButton {
                     text: "Save Preset"; iconSymbol: "bookmark"; primary: false; enabled: backend.canSavePreset
                     implicitWidth: 150; implicitHeight: 46
@@ -268,17 +268,28 @@ Item {
                     }
                 }
                 CustomButton {
-                    text: backend.isStreaming || backend.sessionBusy ? "Stop" : "Start"
+                    text: backend.appliedStreamingBackend === "none" ? (backend.isStreaming ? "Remove" : "Create")
+                        : backend.applyingConfiguration ? "Restarting…" : "Restart"
                     implicitWidth: 150; implicitHeight: 46
-                    iconSymbol: text === "Stop" ? "stop" : "play"
-                    danger: text === "Stop"
-                    enabled: text === "Stop" || (!backend.sunshineChoicesSaving
-                        && (backend.sessionMode === "Mirror" || backend.sessionHasDisplays))
-                    onClicked: text === "Stop" ? backend.stopSession() : backend.startSession()
+                    iconSymbol: backend.appliedStreamingBackend === "none" ? (backend.isStreaming ? "stop" : "play") : "reset"
+                    enabled: !backend.applyingConfiguration && !backend.sunshineChoicesSaving
+                    onClicked: {
+                        if (backend.appliedStreamingBackend === "none") {
+                            if (backend.isStreaming) backend.stopSession()
+                            else backend.startSession()
+                        } else backend.restartSession()
+                    }
+                }
+                CustomButton {
+                    text: "Stop"; primary: false; iconSymbol: "stop"
+                    implicitWidth: 150; implicitHeight: 46
+                    iconTint: theme.dark ? "#ff777f" : "#c03943"
+                    visible: backend.appliedStreamingBackend !== "none" && (backend.isStreaming || backend.sessionBusy || backend.applyingConfiguration)
+                    onClicked: backend.stopSession()
                 }
                 CustomButton {
                     text: "Start added display"
-                    visible: !backend.remoteLoginEnabled && backend.isStreaming && backend.sessionPendingDisplays
+                    visible: false
                     enabled: !backend.sessionBusy
                     onClicked: backend.startSession()
                 }

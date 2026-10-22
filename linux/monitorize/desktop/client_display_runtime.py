@@ -170,9 +170,11 @@ class ClientDisplayRuntime(QObject):
         slot = ClientSlot(instance, dict(config))
         self.slots[instance] = slot
         if not self._launch(slot):
-            self.slots.pop(instance)
-            self.changed.emit()
-            return False
+            if slot.permanent_failure:
+                self.slots.pop(instance)
+                self.changed.emit()
+                return False
+            slot.status = 'recovering'
         self._watchdog.start()
         self.changed.emit()
         return True
@@ -228,7 +230,10 @@ class ClientDisplayRuntime(QObject):
         from monitorize.platform.session_layout import MODES, layout_supported
         mode = config.get('display_behavior', 'extend')
         if mode not in MODES or (mode != 'extend' and not layout_supported(config.get('de'))):
-            self.error = 'Primary and virtual-only modes require native KDE Wayland with recovery support.'
+            self.error = 'Primary and virtual-only modes require a supported native Wayland recovery backend.'
+            return False
+        if mode!='extend' and config.get('de')=='gnome' and config.get('virtual_display_creator','native')!='vkms':
+            self.error='GNOME guarded primary and virtual-only modes currently require VKMS.'
             return False
         if mode != 'extend' and not supports_control_protocol(instance, marker=b'MONITORIZE_LAYOUT_RECOVERY=1'):
             self.error = 'Rebuild Monitorize Sunshine with layout recovery protocol v1 before using this display behavior.'
@@ -258,6 +263,7 @@ class ClientDisplayRuntime(QObject):
         except OSError:
             return 'pending', ''
         if 'MONITORIZE_CODEC_PROBE_FAILED' in log:
+            slot.permanent_failure = True
             return 'failed', f"Selected encoder/codec ({slot.config.get('encoder', 'Auto')} / {slot.config.get('codec', 'Auto')}) failed its codec test. Inspect Sunshine logs; no codec fallback was used."
         if 'Fatal:' in log:
             return 'failed', 'Sunshine reported a fatal startup error; inspect its log.'
@@ -286,7 +292,7 @@ class ClientDisplayRuntime(QObject):
             stop_sunshine(slot.instance)
             self._cleanup(slot)
             slot.error = self.error = message or 'Sunshine listener startup timed out.'
-            slot.status = 'recovering' if not slot.manual and (slot.intentional_recycle or slot.config.get('client_restart_on_crash', False)) else 'error'
+            slot.status = 'recovering' if not slot.manual and not slot.permanent_failure and (slot.intentional_recycle or slot.config.get('client_restart_on_crash', False)) else 'error'
         return False
 
     def _gpu(self, config):

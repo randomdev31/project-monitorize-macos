@@ -16,7 +16,9 @@ class DeliveryTests(unittest.TestCase):
             try:module.stage(Path(d))
             finally:os.umask(previous)
             root=Path(d)
-            for relative in ('usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py',
+            for relative in ('usr/lib/monitorize-remote-login/monitorize/remote_login/gdm_context.py',
+                'usr/lib/monitorize-remote-login/monitorize/remote_login/gdm_probe.py',
+                'usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py',
                 'usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py',
                 'usr/libexec/monitorize/remote-login/entry.py',
                 'usr/lib/systemd/system/monitorize-vkms-boot-display.service',

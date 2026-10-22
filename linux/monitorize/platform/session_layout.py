@@ -22,9 +22,9 @@ def output_identity(output):
 
 
 def layout_supported(desktop):
-    return (desktop == 'kde' and not os.path.isfile('/.flatpak-info')
+    return (desktop in ('kde','hyprland','gnome') and not os.path.isfile('/.flatpak-info')
             and os.environ.get('XDG_SESSION_TYPE', '').lower() == 'wayland'
-            and bool(shutil.which('kscreen-doctor')))
+            and (desktop=='gnome' or bool(shutil.which('hyprctl' if desktop=='hyprland' else 'kscreen-doctor'))))
 
 
 class KdeLayout:
@@ -136,14 +136,17 @@ class LayoutTransaction:
             self.backend.restore(data['snapshot'], data['owned'])
             self.journal.unlink()
 
-    def reserve(self, slot):
+    def reserve(self, slot, exclude=()):
         if not self.snapshot:
             outputs = self.backend.outputs()
             if any('priority' not in o for o in outputs if o.get('connected')):
                 raise RuntimeError('This KDE version does not report display priorities for safe restoration.')
             self.snapshot = [dict(name=o['name'], enabled=bool(o.get('enabled')),
                                   priority=int(o.get('priority') or 1), pos=o.get('pos'),
-                                  identity=output_identity(o)) for o in outputs if o.get('connected')]
+                                  mode=o.get('mode'),scale=o.get('scale'),
+                                  identity=output_identity(o)) for o in outputs if o.get('connected') and o['name'] not in exclude]
+            if hasattr(self.backend,'snapshot'):
+                self.snapshot=self.backend.snapshot(outputs,exclude)
             if not any(o['enabled'] for o in self.snapshot):
                 self.snapshot = []
                 raise RuntimeError('A physical display baseline is required before using this mode.')
@@ -203,3 +206,13 @@ class LayoutTransaction:
     def restore(self):
         if self.snapshot:
             self.backend.restore(self.snapshot, self.targets.values())
+
+
+def current_layout_backend():
+    if 'gnome' in os.environ.get('XDG_CURRENT_DESKTOP','').lower().split(':'):
+        from .gnome_layout import GnomeLayout
+        return GnomeLayout()
+    if 'hyprland' in os.environ.get('XDG_CURRENT_DESKTOP','').lower():
+        from .hyprland_layout import HyprlandLayout
+        return HyprlandLayout()
+    return KdeLayout()

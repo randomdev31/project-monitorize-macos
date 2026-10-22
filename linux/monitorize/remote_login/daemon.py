@@ -44,7 +44,7 @@ def build_service(settings,bus):
         return lease.get('connector') or find_boot_output(require_enabled=False) or ('Virtual-0' if lease.get('protected') is True else None)
     # Publish listener identity without enabling capture. EnginePrepare activates
     # the output only for an authenticated launch, including after idle unplug.
-    store=DescriptorStore(settings,reserved_output,lambda uid,session:{'connector':reserved_output()})
+    store=DescriptorStore(settings,reserved_output,lambda uid,session:{'connector':reserved_output()},session_environment=helper._active_session)
     def health(phase):
         from .health import read_health
         try:
@@ -126,18 +126,16 @@ def build_service(settings,bus):
         try:
             gate,context=boot_gate(sender,transport,idle=operation=='idle')
             if operation=='check':return dict(valid=True)
+            session,environment=helper._active_session(context['greeter_uid'])
+            from .wayland_greeter import greeter_compositor
+            greeter_compositor(settings,context,session,environment,helper)
             def check():gate.check(sender,service.boot_generation,idle=operation=='idle')
             def activate(output,remaining):
                 # Resolve environment exclusively from the verified greeter UID.
                 session,environment=helper._active_session(context['greeter_uid'])
                 if session!=context['session']:raise PermissionError('Greeter session changed.')
-                desktop=environment.get('XDG_CURRENT_DESKTOP','').lower()
-                if not any(name in desktop for name in ('kde','plasma')):
-                    raise RuntimeError('No validated activation adapter for this greeter compositor.')
-                check()
-                helper._run_worker(context['greeter_uid'],environment,dict(action='activate',name=output['name'],
-                    card=output['card'],connector_id=output['connector_id'],mode=[1920,1080,60],snapshot=None),timeout=min(remaining,8))
-                check()
+                from .wayland_greeter import activate_greeter
+                return activate_greeter(settings,context,session,environment,output,remaining,helper,check)
             result=greeter_operation_installed(operation,context_check=check,activate=activate)
             check()
             return dict(output_name=result.get('connector') or '',capture='kms',width=1920,height=1080,fps=60)
@@ -188,8 +186,9 @@ def main():
     require_installed(__file__)
     settings=read_settings()
     manager=Path('/etc/systemd/system/display-manager.service')
-    if settings.enabled and manager.resolve().name!='plasmalogin.service':
-        raise RuntimeError('Installed display manager has no validated remote-login adapter.')
+    if settings.enabled:
+        from .display_managers import require_manager
+        require_manager(getattr(settings,'manager','plasmalogin.service'))
     from dbus.mainloop.glib import DBusGMainLoop
     from gi.repository import GLib
     import dbus

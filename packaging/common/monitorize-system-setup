@@ -80,7 +80,7 @@ def main():
     parser.add_argument("--input", action="store_true", help="grant the authorizing user uinput access")
     parser.add_argument("--firewall", action="store_true", help="allow Monitorize through an active firewall")
     parser.add_argument('--unattended-vkms', action='store_true')
-    parser.add_argument('--remote-login', choices=('enable','disable','remove'))
+    parser.add_argument('--remote-login', choices=('enable','disable','remove','fallback'))
     args = parser.parse_args()
     if not args.input and not args.firewall and not args.unattended_vkms and not args.remote_login:
         parser.error("select --input, --firewall and/or --unattended-vkms")

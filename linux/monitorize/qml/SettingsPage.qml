@@ -38,8 +38,6 @@ Item {
         settingsAutostartEnabled = backend.isAutostartEnabled()
         minimizeTrayCheck.checked = settingsMinimizeToTray
         autostartCheck.checked = settingsAutostartEnabled
-        listenOnOpenCheck.checked = gen["client_listen_on_open"] === true
-        restartOnCrashCheck.checked = gen["client_restart_on_crash"] === true
         settingsError = ""
         settingsLoading = false
         refreshStartup()
@@ -74,11 +72,6 @@ Item {
         if (settingsLoading) return
         settingsMinimizeToTray = minimizeTrayCheck.checked
         backend.saveGeneralSettings(settingsMinimizeToTray)
-    }
-
-    function saveClientListenerSettings() {
-        if (settingsLoading) return
-        backend.saveClientListenerSettings(listenOnOpenCheck.checked, restartOnCrashCheck.checked)
     }
 
     function saveAutostartSettings() {
@@ -140,6 +133,8 @@ Item {
                     CustomCheckBox {
                         keepCheckedBlue: true
                         id: autostartCheck; objectName: "loginStartupCheck"; text: "Start Monitorize after login"
+                        expandableLabel: true
+                        onLabelClicked: page.bootOptionsExpanded = !page.bootOptionsExpanded
                         enabled: !backend.remoteLoginSetupBusy
                         Layout.fillWidth: false; onClicked: page.saveAutostartSettings()
                     }
@@ -192,22 +187,6 @@ Item {
                     enabled: !backend.remoteLoginSetupBusy
                     onClicked: backend.configureRemoteLogin(false)
                 }
-                CustomCheckBox {
-                    keepCheckedBlue: true
-                    id: listenOnOpenCheck
-                    text: "Start listening when Monitorize launches"
-                    Layout.fillWidth: true
-                    enabled: backend.clientDisplaySettingsAvailable && !backend.isStreaming && !backend.sessionBusy
-                    onClicked: page.saveClientListenerSettings()
-                }
-                CustomCheckBox {
-                    keepCheckedBlue: true
-                    id: restartOnCrashCheck
-                    text: "Automatically restart Sunshine if it crashes"
-                    Layout.fillWidth: true
-                    enabled: backend.clientDisplaySettingsAvailable && !backend.isStreaming && !backend.sessionBusy
-                    onClicked: page.saveClientListenerSettings()
-                }
 
             }
             SectionCard {
@@ -239,7 +218,7 @@ Item {
                     description: "Restore Sunshine settings to their default values."
                     symbol: "reset"; actionText: "Reset to defaults"
                     Layout.fillWidth: true
-                    actionEnabled: !backend.isStreaming && !backend.sessionBusy
+                    actionEnabled: !backend.applyingConfiguration
                     onClicked: sunshineResetDialog.open()
                 }
                 Text {
@@ -283,7 +262,7 @@ Item {
         standardButtons: Dialog.Ok | Dialog.Cancel
         width: Math.min(420, page.width - 40)
         contentItem: Text {
-            text: "Restore Monitorize's default Sunshine settings and application list for both displays? Pairing and saved display layouts will be kept."
+            text: "Load Monitorize's default streaming choices for both displays? Use Apply in Configure to restart with these changes. Pairing and saved display layouts will be kept."
             color: theme.textPrimary
             wrapMode: Text.WordWrap
         }

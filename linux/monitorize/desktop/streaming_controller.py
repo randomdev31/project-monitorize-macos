@@ -331,7 +331,7 @@ class StreamingController(QObject):
             encoder=encoder, codec=codec, native_pen_touch=native_pen_touch, enable_audio=enable_audio,
             options=options, gpu_id=gpu_id, mirror_output=mirror_output,
             virtual_display_creator=virtual_display_creator, capture=capture),
-            self.streaming_backend == "sunshine" and load_general_settings().get("client_restart_on_crash", False))
+            self.streaming_backend == "sunshine")
         self.event_buffer = ""
         self.pending_options = options
         self._set_streaming(True)

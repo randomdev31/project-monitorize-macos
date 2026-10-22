@@ -16,6 +16,14 @@ class DescriptorTests(unittest.TestCase):
         self.store=DescriptorStore(self.settings,lambda:'Virtual-4',self.adopt,root=self.root,owner_uid=os.getuid())
         self.caller={'uid':os.getuid(),'session':'s1'};self.token='a'*32
 
+    def test_desktop_context_is_resolved_by_root_not_client(self):
+        self.store.session_environment=lambda uid:('s1',{'XDG_SESSION_TYPE':'wayland','XDG_CURRENT_DESKTOP':'Hyprland'})
+        result=self.store.write(self.caller,self.token,{'capture':'kms','output_name':'Virtual-4'})
+        self.assertEqual(result['desktop'],'Hyprland')
+        with self.assertRaises(ValueError):self.store.write(self.caller,self.token,{'capture':'kms','output_name':'Virtual-4','desktop':'KDE'})
+        self.store.session_environment=lambda uid:('other',{'XDG_SESSION_TYPE':'wayland','XDG_CURRENT_DESKTOP':'Hyprland'})
+        with self.assertRaises(PermissionError):self.store.write(self.caller,self.token,{'capture':'kms','output_name':'Virtual-4'})
+
     def test_private_descriptor_is_atomic_and_bound_to_session(self):
         self.store.write(self.caller,self.token,{'capture':'kms','output_name':'Virtual-4'})
         path=self.root/str(os.getuid())/'desktop.json'

@@ -49,10 +49,10 @@ def evaluate_readiness(facts: dict) -> dict:
                            detail=passed if value is True else failed if value is False else unknown))
 
     manager = facts.get('manager', '')
-    check('display_manager', True if manager == 'plasmalogin.service' and facts.get('manager_active') is True else
-          False if facts.get('manager_active') is False else None,
-          'Active Plasma Login Manager; adapter still requires live validation.',
-          'Display manager is not active.',
+    check('display_manager', True if facts.get('manager_supported',manager=='plasmalogin.service') and facts.get('manager_active') is True else
+          False if facts.get('manager_active') is False or facts.get('manager_supported') is False else None,
+          'Active supported display-manager configuration; live validation still required.',
+          facts.get('manager_detail') or 'Display manager is not active.',
           'This manager has no validated remote-login adapter: ' + str(manager or 'unknown'))
     check('vkms_module', facts.get('module'), 'Monitorize VKMS module is loaded.',
           'Monitorize VKMS module is not loaded.')
@@ -141,7 +141,9 @@ def collect_readiness(sunshine: str | None = None) -> dict:
             capability = 'cap_sys_admin' in cap_output
     render_nodes = list(Path('/dev/dri').glob('renderD*'))
     home = Path.home()
-    facts = dict(manager=manager, manager_version=version, kernel=platform.release(),
+    from monitorize.remote_login.display_managers import manager_capabilities
+    manager_info=manager_capabilities()
+    facts = dict(manager_supported=manager_info['supported'],greeter_compositor=manager_info['compositor'],manager_validated=manager_info['validated'],manager_detail=manager_info['message'],manager=manager, manager_version=version, kernel=platform.release(),
         manager_active=None if active_code is None else active_code == 0,
         bootstrap=None if bootstrap_code is None else bootstrap_code == 0,
         module=_present('/sys/module/monitorize_vkms'), seat=seat, greeter=greeter,
@@ -150,4 +152,7 @@ def collect_readiness(sunshine: str | None = None) -> dict:
         render_access=any(os.access(p, os.R_OK | os.W_OK) for p in render_nodes),
         identity_access=os.access(home, os.R_OK | os.X_OK),
         encoder_verified=None, framebuffer_verified=None)
+    if manager_info['manager']=='gdm.service':
+        from monitorize.remote_login.gdm_probe import collect
+        facts['gdm_probe']=collect(capability=manager_info)
     return evaluate_readiness(facts)

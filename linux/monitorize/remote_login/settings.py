@@ -20,6 +20,7 @@ class Settings:
     profile: str
     encoder: str
     adapter: str
+    manager: str = "plasmalogin.service"
 
     @property
     def directory(self):return Path('/var/lib/monitorize/remote-login')/str(self.uid)
@@ -45,7 +46,8 @@ def read_settings(path=SETTINGS,*,owner_uid=0,account_lookup=pwd.getpwuid):
         account=account_lookup(uid)
         if (account.pw_uid!=uid or account.pw_gid!=gid or account.pw_name!=values['username'] or
             account.pw_dir!=values['home']):raise ValueError()
-        if values['manager']!='plasmalogin.service':raise ValueError()
+        from .display_managers import MANAGERS
+        if values['manager'] not in MANAGERS:raise ValueError()
         encoder=values['encoder'];adapter=values['adapter'];profile=values['profile']
         if encoder not in ('software','vaapi','nvenc'):raise ValueError()
         if not isinstance(adapter,str) or (adapter and not re.fullmatch(r'/dev/dri/renderD[0-9]+',adapter)):raise ValueError()
@@ -59,13 +61,13 @@ def read_settings(path=SETTINGS,*,owner_uid=0,account_lookup=pwd.getpwuid):
             adapter=values.get('reconnect_adapter','')
             if encoder not in ('software','vaapi','nvenc'):raise ValueError()
             if not isinstance(adapter,str) or (adapter and not re.fullmatch(r'/dev/dri/renderD[0-9]+',adapter)):raise ValueError()
-        return Settings(enabled,uid,gid,account.pw_name,account.pw_dir,profile,encoder,adapter)
+        return Settings(enabled,uid,gid,account.pw_name,account.pw_dir,profile,encoder,adapter,values['manager'])
     except (OSError,ValueError,TypeError,KeyError):
         raise ValueError('Remote-login configuration is unsafe, unsupported or no longer matches its account.') from None
 
 
 def validate_descriptor(values,settings,expected_output):
-    allowed={'capture','output_name','pipewire_node','wayland_display','display'}
+    allowed={'capture','output_name','pipewire_node','wayland_display','display','stream_options'}
     if not isinstance(values,dict) or set(values)-allowed:raise ValueError('Unsupported desktop descriptor fields.')
     capture=values.get('capture');output=values.get('output_name')
     if capture not in ('kms','kwin') or output!=expected_output or not isinstance(output,str) or not re.fullmatch(r'Virtual-[0-9]+',output):
@@ -81,4 +83,17 @@ def validate_descriptor(values,settings,expected_output):
             value=values[name]
             if not isinstance(value,str) or not re.fullmatch(pattern,value):raise ValueError('Invalid graphical session endpoint.')
             result[name]=value
+    if 'stream_options' in values:
+        options=values['stream_options']
+        enums={'encoder':('', 'nvenc', 'vaapi', 'vulkan', 'software'),
+               'hevc_mode':('0','1','2'), 'av1_mode':('0','1','2'),
+               'native_pen_touch':('enabled','disabled'), 'stream_audio':('enabled','disabled')}
+        if not isinstance(options,dict) or set(options)-set(enums)-{'adapter_name'}:
+            raise ValueError('Unsupported desktop streaming options.')
+        for key,value in options.items():
+            if key=='adapter_name':
+                if not isinstance(value,str) or (value and not re.fullmatch(r'/dev/dri/renderD[0-9]{1,5}',value)):
+                    raise ValueError('Invalid encoding adapter.')
+            elif value not in enums[key]:raise ValueError('Invalid desktop streaming option.')
+        result['stream_options']=dict(options)
     return result

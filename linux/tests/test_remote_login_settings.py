@@ -24,8 +24,16 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.directory,Path('/var/lib/monitorize/remote-login/1000'))
         self.assertEqual(settings.runtime,Path('/run/monitorize-remote-login/1000'))
 
+    def test_sddm_manager_is_retained(self):
+        self.values['manager']='sddm.service'
+        self.assertEqual(self.load().manager,'sddm.service')
+
+    def test_gdm_manager_is_retained(self):
+        self.values['manager']='gdm.service'
+        self.assertEqual(self.load().manager,'gdm.service')
+
     def test_uid_reuse_and_unsupported_manager_rejected(self):
-        for field,value in (('username','other'),('home','/home/other'),('uid',True),('gid',123),('manager','gdm.service')):
+        for field,value in (('username','other'),('home','/home/other'),('uid',True),('gid',123),('manager','lightdm.service')):
             original=self.values[field];self.values[field]=value
             with self.assertRaises(ValueError):self.load()
             self.values[field]=original
@@ -63,3 +71,13 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(hasattr(result,'transition_mode'))
         self.values['reconnect_adapter']='../../unsafe'
         with self.assertRaises(ValueError):self.load()
+
+    def test_stream_options_are_whitelisted_and_typed(self):
+        settings=self.load()
+        base={'capture':'kms','output_name':'Virtual-4'}
+        options={'encoder':'nvenc','hevc_mode':'0','av1_mode':'0','adapter_name':'/dev/dri/renderD128','stream_audio':'enabled'}
+        result=validate_descriptor(dict(base,stream_options=options),settings,'Virtual-4')
+        self.assertEqual(result['stream_options'],options)
+        for invalid in ({'command':'evil'},{'encoder':'nvenc\nfile_state=evil'},
+                        {'adapter_name':'../../other'},{'hevc_mode':True}, {'stream_audio':'maybe'}):
+            with self.assertRaises(ValueError):validate_descriptor(dict(base,stream_options=invalid),settings,'Virtual-4')

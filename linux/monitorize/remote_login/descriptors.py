@@ -11,7 +11,8 @@ ROOT=Path('/run/monitorize-remote-login')
 
 
 class DescriptorStore:
-    def __init__(self,settings,output_finder,adopter,*,root=ROOT,owner_uid=0):
+    def __init__(self,settings,output_finder,adopter,*,root=ROOT,owner_uid=0,session_environment=None):
+        self.session_environment=session_environment
         self.settings=settings;self.output_finder=output_finder;self.adopter=adopter
         self.root=Path(root);self.owner_uid=owner_uid
 
@@ -31,8 +32,14 @@ class DescriptorStore:
             raise PermissionError('Invalid descriptor owner/generation.')
         expected=self.output_finder()
         values=validate_descriptor(descriptor,self.settings,expected)
-        # Validate before any compositor operation. Adopter rechecks active session,
-        # boot generation and full DRM identity under the VKMS lifecycle lock.
+        # Resolve and validate trusted session metadata before compositor operations.
+        if self.session_environment is not None:
+            actual,environment=self.session_environment(caller['uid'])
+            if actual!=caller['session'] or environment.get('XDG_SESSION_TYPE')!='wayland':
+                raise PermissionError('The selected desktop Wayland session changed.')
+            from .session_context import desktop_context
+            values.update(desktop_context(environment))
+        # Adopter rechecks active session, generation and DRM identity under its lock.
         adopted=self.adopter(caller['uid'],caller['session'])
         if adopted.get('connector')!=expected:raise RuntimeError('Boot output changed during adoption.')
         self._directory(self.root,0o755)

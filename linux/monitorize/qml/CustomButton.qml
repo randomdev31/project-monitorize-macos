@@ -7,6 +7,7 @@ Button {
     property bool primary: true
     property bool danger: false
     property string iconSymbol: ""
+    property color iconTint: primary ? theme.buttonText : theme.accent
     implicitWidth: Math.max(120, contentItem.implicitWidth + 32)
     implicitHeight: 42
 
@@ -31,7 +32,7 @@ Button {
             LineIcon {
                 visible: btn.iconSymbol.length > 0
                 symbol: btn.iconSymbol
-                tint: !btn.enabled ? theme.textMuted : (btn.primary ? theme.buttonText : theme.accent)
+                tint: !btn.enabled ? theme.textMuted : btn.iconTint
                 width: visible ? 18 : 0
                 height: 20
             }

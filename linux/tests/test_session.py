@@ -194,6 +194,17 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(snapshot["primary"]["resolution"], "2560x1600")
         self.assertTrue(snapshot["second"]["use_client_display_settings"])
 
+    def test_runtime_snapshot_isolated_from_later_saved_edits(self):
+        import copy
+        original=copy.deepcopy(self.config)
+        self.s.runtime_configuration={"primary":original,"second":copy.deepcopy(self.second_config),"display_behavior":"extend"}
+        self.config['resolution']='3840x2160'
+        self.second_config['enabled']=True
+        self.assertEqual(self.s.configuration()['res'],original['resolution'])
+        self.assertEqual(self.s._configured_display_count(),1)
+        returned=self.s._primary_settings();returned['resolution']='800x600'
+        self.assertEqual(self.s.configuration()['res'],original['resolution'])
+
     def test_add_only_creates_cards_in_both_backend_modes(self):
         for backend in ("sunshine", "none"):
             self.c.streaming_backend = backend

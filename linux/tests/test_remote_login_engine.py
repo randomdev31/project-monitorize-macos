@@ -55,3 +55,12 @@ class EngineTests(unittest.TestCase):
                     with acquire_identity_lock(paths):pass
             finally:owner.stop()
             with acquire_identity_lock(paths):pass
+
+    def test_early_stdout_is_preserved_before_sunshine_log_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths=identity_paths(Path(directory));owner=EngineOwner(paths)
+            console=Path(directory)/'console.log'
+            owner.start([sys.executable,'-c','print("Usage: invalid startup options")'],{},diagnostics=console)
+            owner.process.wait(timeout=3);self.assertEqual(owner.reap(),0)
+            self.assertIn('invalid startup options',console.read_text())
+            with acquire_identity_lock(paths):pass

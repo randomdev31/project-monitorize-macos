@@ -20,6 +20,40 @@ class RunnerTests(unittest.TestCase):
         selected,_=desktop_command(settings,{'capture':'kms','output_name':'Virtual-4'})
         self.assertIn('adapter_name=/dev/dri/renderD128',selected)
 
+    def test_desktop_options_override_enrolled_encoder_but_not_identity(self):
+        settings=SimpleNamespace(profile='/home/account/.config/monitorize/sunshine-1',directory=Path('/private'),
+            encoder='software',adapter='/dev/dri/renderD128',home='/home/account',uid=1000)
+        argv,env=desktop_command(settings,{'capture':'kms','output_name':'Virtual-4',
+            'stream_options':{'encoder':'nvenc','hevc_mode':'2','av1_mode':'1','adapter_name':''}})
+        self.assertEqual([v for v in argv if v.startswith('encoder=')][-1],'encoder=nvenc')
+        self.assertFalse(any(v.endswith('=') for v in argv))
+        self.assertIn('hevc_mode=2',argv)
+        with self.assertRaises(ValueError):desktop_command(settings,{'capture':'kms','output_name':'Virtual-4',
+            'stream_options':{'file_state':'/untrusted'}})
+
+    def test_auto_settings_clear_profile_without_empty_cli_values(self):
+        import tempfile
+        from monitorize.remote_login.runner import write_desktop_config
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);profile=root/'profile';profile.mkdir();(root/'runtime').mkdir()
+            (profile/'sunshine.conf').write_text('encoder = nvenc\nadapter_name = /dev/dri/renderD129\nhevc_mode = 2\n# untouched\nfoo = keep\n')
+            settings=SimpleNamespace(profile=str(profile),directory=root,encoder='software',adapter='/dev/dri/renderD128',home=str(root),uid=1000)
+            descriptor=dict(capture='kms',output_name='Virtual-1',stream_options={'encoder':'','adapter_name':'','hevc_mode':'0','av1_mode':'0'})
+            write_desktop_config(settings,descriptor)
+            argv,_=desktop_command(settings,descriptor)
+            self.assertFalse(any(v.endswith('=') for v in argv))
+            self.assertFalse(any(v.startswith('encoder=') or v.startswith('adapter_name=') for v in argv))
+            text=Path(argv[1]).read_text()
+            self.assertNotIn('encoder = nvenc',text);self.assertNotIn('adapter_name =',text)
+            self.assertIn('foo = keep',text);self.assertIn('hevc_mode=0',argv)
+            self.assertIn('encoder = nvenc',(profile/'sunshine.conf').read_text())
+
+    def test_trusted_hyprland_context_replaces_kde_environment(self):
+        settings=SimpleNamespace(profile='/home/account/config',directory=Path('/private'),encoder='software',adapter='',home='/home/account',uid=1000)
+        _,environment=desktop_command(settings,dict(capture='kms',output_name='Virtual-1',desktop='Hyprland'))
+        self.assertEqual(environment['XDG_CURRENT_DESKTOP'],'Hyprland')
+        with self.assertRaises(ValueError):desktop_command(settings,dict(capture='kms',output_name='Virtual-1',desktop='LD_PRELOAD=evil'))
+
     def test_session_check_rejects_logout_other_user_remote_or_wrong_seat(self):
         values='User=1000\nActive=yes\nRemote=no\nType=wayland\nClass=user\nSeat=seat0\n'
         with patch('monitorize.remote_login.runner.subprocess.run',return_value=Mock(stdout=values)):
@@ -58,3 +92,28 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual([c.args[1] for c in interface.EngineDisplay.call_args_list],['check'])
             self.assertIn('MONITORIZE_CONTROL_SOCKET',owner.start.call_args.args[1])
             owner.stop.assert_called_once()
+
+    def test_desktop_early_exit_is_published_in_health(self):
+        import tempfile
+        from contextlib import ExitStack
+        from monitorize.remote_login.runner import desktop_main
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            settings=SimpleNamespace(directory=Path(directory),uid=1000,runtime=Path(directory))
+            owner=Mock(running=False);owner.process=None;owner.reap.return_value=0
+            stop=Mock();stop.is_set.side_effect=[False,True]
+            health=Mock()
+            for target,value in (
+                ('monitorize.remote_login.runner.preflight',Mock(return_value=settings)),
+                ('monitorize.remote_login.runner.read_descriptor',Mock(return_value={'session':'s1','generation':'g'})),
+                ('monitorize.remote_login.runner.write_desktop_config',Mock()),
+                ('monitorize.remote_login.runner.desktop_command',Mock(return_value=(['engine'],{}))),
+                ('monitorize.remote_login.runner.EngineOwner',Mock(return_value=owner)),
+                ('monitorize.remote_login.runner._stopping',Mock(return_value=stop)),
+                ('monitorize.remote_login.runner.own_session',Mock(return_value=True)),
+                ('monitorize.remote_login.runner.write_health',health),
+                ('monitorize.remote_login.control.ControlServer',Mock())):
+                stack.enter_context(patch(target,value))
+            self.assertEqual(desktop_main(),0)
+            self.assertIn('Sunshine exited (status 0)',health.call_args.args[1]['startup_error'])
+            self.assertFalse(health.call_args.args[1]['listening'])
+            owner.start.assert_not_called()  # Backoff remains active.

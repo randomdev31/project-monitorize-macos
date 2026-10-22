@@ -20,7 +20,7 @@ class MirrorRetry:
         if self.intent is not None:self.intent['mirror_output']=output
     def healthy(self):
         if self.healthy_since is None:self.healthy_since=self.clock()
-        if self.clock()-self.healthy_since>=5:self.attempt=0
+        if self.clock()-self.healthy_since>=60:self.attempt=0
     def failed(self,error):
         if self.intent is None or self.pending:return
         self.healthy_since=None;self.pending=True

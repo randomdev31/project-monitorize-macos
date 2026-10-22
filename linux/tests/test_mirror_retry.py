@@ -18,7 +18,7 @@ class MirrorRetryTests(unittest.TestCase):
   for delay in (2,5,15,60,60):
    self.retry.failed('crashed');self.assertEqual(self.timer.delay,delay*1000);self.timer.fire()
    self.assertEqual(self.launch.call_args.args[0]['mirror_output'],'eDP-1')
-  self.retry.healthy();self.now=5;self.retry.healthy()
+  self.retry.healthy();self.now=60;self.retry.healthy()
   self.retry.failed('again');self.assertEqual(self.timer.delay,2000)
  def test_stop_invalidates_already_queued_callback(self):
   self.retry.arm(self.config,True);self.retry.failed('crashed');callback=self.timer.callback

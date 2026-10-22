@@ -36,7 +36,7 @@ class EngineOwner:
     @property
     def running(self):return self.process is not None and self.process.poll() is None
 
-    def start(self,argv,environment,*,prepare=None):
+    def start(self,argv,environment,*,prepare=None,diagnostics=None):
         if self.running:raise RuntimeError('An engine is already running.')
         self.reap()
         self._lock=acquire_identity_lock(self.paths)
@@ -46,9 +46,23 @@ class EngineOwner:
             self._lock=None;raise
         try:
             if prepare is not None:prepare()
-            self.process=subprocess.Popen(argv,env=environment,stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-                start_new_session=True,pass_fds=(fd,))
+            output=None
+            try:
+                if diagnostics is not None:
+                    import stat
+                    fd_output=os.open(diagnostics,os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,0o600)
+                    output=os.fdopen(fd_output,'w')
+                    info=os.fstat(output.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_nlink!=1:
+                        raise ValueError('Unsafe engine diagnostic log.')
+                    os.fchmod(output.fileno(),0o600);os.ftruncate(output.fileno(),0)
+                self.process=subprocess.Popen(argv,env=environment,stdin=subprocess.DEVNULL,
+                    stdout=output if output is not None else subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT if output is not None else subprocess.DEVNULL,
+                    start_new_session=True,pass_fds=(fd,))
+            finally:
+                if output is not None:output.close()
+
         except Exception:
             self._release_parent_lock();raise
         return self.process.pid

@@ -109,15 +109,26 @@ def remote_login_setup_status():
     """Read enrollment metadata only; does not contact or activate a service."""
     from monitorize.remote_login.settings import SETTINGS,read_settings
     entry=Path('/usr/libexec/monitorize/remote-login/entry.py')
+    from monitorize.remote_login.display_managers import manager_capabilities
+    capability=manager_capabilities()
     result={'available':HELPER.is_file() and entry.is_file(),'enabled':False,
-            'supported':Path('/etc/systemd/system/display-manager.service').resolve().name=='plasmalogin.service',
-            'message':'Remote login is optional and currently validates Plasma Login Manager only.'}
+            'supported':capability['supported'],'manager':capability['manager'],
+            'compositor':capability['compositor'],'validated':capability['validated'],
+            'message':capability['message']}
+    if capability['manager'] in ('sddm.service','gdm.service'):
+        installed=Path('/usr/lib/monitorize-remote-login/monitorize/remote_login/display_managers.py')
+        try:current=('GDM_WAYLAND_PROTOCOL = 1' if capability['manager']=='gdm.service' else 'SDDM_WAYLAND_PROTOCOL = 1') in installed.read_text()
+        except OSError:current=False
+        if not current:result.update(available=False,message='Install the '+('GDM' if capability['manager']=='gdm.service' else 'SDDM')+' Wayland remote-login service update before setup.')
     if SETTINGS.exists():
         try:
             settings=read_settings()
             if settings.uid!=os.getuid():
                 result.update(available=False,message='Remote login belongs to another local account.')
-            else:result['enabled']=settings.enabled
+            else:
+                result['enabled']=settings.enabled
+                if getattr(settings,'manager','plasmalogin.service')!=capability['manager']:
+                    result.update(supported=False,message='Display manager changed after enrollment. Revalidate remote-login setup.')
         except ValueError:result.update(available=False,message='Remote-login configuration needs administrator repair.')
     if not result['available'] and not SETTINGS.exists():
         result['message']='Install the trusted remote-login service assets before enabling this feature.'
@@ -135,3 +146,18 @@ def apply_remote_login_setup(enabled):
     except subprocess.TimeoutExpired:return {'success':False,'message':'Remote-login setup timed out. Inspect its enrollment status before retrying.'}
     except OSError:return {'success':False,'message':'Could not start the installed administrator setup helper.'}
     return parse_system_setup_result(result.returncode,result.stdout,result.stderr)
+
+
+def prepare_desktop_fallback():
+    """Explicit administrator handoff; no persistent boot preference changes."""
+    installed=Path('/usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py')
+    try:
+        if 'DESKTOP_FALLBACK_PROTOCOL = 1' not in installed.read_text():
+            return {'success':False,'message':'Install the updated remote-login system assets once to enable safe desktop fallback.'}
+    except OSError:return {'success':False,'message':'Install remote-login system assets to enable safe desktop fallback.'}
+    pkexec=shutil.which('pkexec')
+    if not pkexec:return {'success':False,'message':'Desktop fallback needs administrator authorization through Polkit.'}
+    try:
+        result=subprocess.run([pkexec,str(HELPER),'--remote-login','fallback'],capture_output=True,text=True,timeout=90,check=False)
+        return parse_system_setup_result(result.returncode,result.stdout,result.stderr)
+    except (OSError,subprocess.TimeoutExpired):return {'success':False,'message':'Desktop fallback authorization or ownership release failed; inspect the remote-login journal.'}

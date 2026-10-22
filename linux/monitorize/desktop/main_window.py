@@ -4,7 +4,7 @@ import os
 import shutil
 import sys
 
-from PyQt6.QtCore import Qt, QProcess, QTimer, QUrl
+from PyQt6.QtCore import Qt, QProcess, QTimer, QUrl, QLockFile, QStandardPaths
 from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtQuickWidgets import QQuickWidget
@@ -28,6 +28,8 @@ from monitorize.platform.display_controller import DisplayController
 from monitorize.platform.process_utils import kill_patterns
 from monitorize.platform.utils import ASSETS_DIR, LINUX_DIR, QML_DIR, detect_desktop_environment
 
+
+INSTANCE_SERVER = "monitorize"
 
 class MonitorizeWindow(QMainWindow):
     def __init__(self):
@@ -86,6 +88,7 @@ class MonitorizeWindow(QMainWindow):
         menu.addAction("Quit").triggered.connect(self._quit_app)
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(self._tray_activated)
+        self.tray.show()
 
     def _update_tray_presets(self):
         self.presets_menu.clear()
@@ -109,7 +112,7 @@ class MonitorizeWindow(QMainWindow):
             self._restore_from_tray()
 
     def _restore_from_tray(self):
-        self.tray.hide()
+        self.tray.show()
         self.showNormal()
         self.raise_()
         self.activateWindow()
@@ -132,9 +135,15 @@ class MonitorizeWindow(QMainWindow):
         self._update_ui_visibility()
 
     def _quit_app(self):
+        if self.backend.configurationDirty:
+            choice = QMessageBox.question(self, "Unapplied changes", "Quit and discard unapplied configuration changes?",
+                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel)
+            if choice != QMessageBox.StandardButton.Discard:return False
         app_log.write("APP", "Application shutting down.")
         self.backend.close()
         self._finish_quit_when_displays_stop()
+        return True
 
     def _finish_quit_when_displays_stop(self):
         if self.backend.streaming._vkms_retiring or self.backend.session.retiring:
@@ -178,15 +187,15 @@ class MonitorizeWindow(QMainWindow):
         minimize = self.backend.should_minimize_to_tray()
         if minimize and QSystemTrayIcon.isSystemTrayAvailable():
             idle = not self.backend.isStreaming and not getattr(self.backend, "remoteLoginEnabled", False)
-            if idle and self._quit_to_tray_agent():
+            if idle and not self.backend.configurationDirty and self._quit_to_tray_agent():
                 event.accept()
                 return
             event.ignore()
             self.hide()
             self.tray.show()
             return
-        self._quit_app()
-        event.accept()
+        if self._quit_app():event.accept()
+        else:event.ignore()
 
     def _ask_desktop_environment(self):
         dialog = QDialog(self)
@@ -255,11 +264,11 @@ def _launch_preset_index(argv):
 
 
 def _show_initial_window(window, start_in_tray):
+    window.tray.show()
     if start_in_tray:
         # At graphical login KDE may register its tray after this process. Qt
         # registers a visible tray icon when the host appears; keep the window hidden.
         QApplication.setQuitOnLastWindowClosed(False)
-        window.tray.show()
         app_log.write("APP", "Started hidden in system tray.")
         return False
     window.show()
@@ -267,18 +276,74 @@ def _show_initial_window(window, start_in_tray):
 
 
 def _handle_instance_command(server, window):
-    connection = server.nextPendingConnection()
-    command = ""
-    if connection.waitForReadyRead(250):
-        command = bytes(connection.readAll()).decode("utf-8", "ignore")
-    connection.deleteLater()
-    if command == "show":
-        window._restore_from_tray()
-    elif command.startswith("preset:"):
-        try:
-            window.backend.launchPreset(int(command.split(":", 1)[1]))
-        except ValueError:
-            pass
+    # Never block the UI thread while waiting for a launcher's command bytes.
+    while server.hasPendingConnections():
+        connection = server.nextPendingConnection()
+        connection.setProperty("commandBuffer", b"")
+        def read(peer=connection):
+            data = bytes(peer.property("commandBuffer") or b"") + bytes(peer.readAll())
+            peer.setProperty("commandBuffer", data)
+            if not data:return
+            if data in (b"show", b"noop") or (data.startswith(b"preset:") and data[7:].isdigit()):
+                command = data.decode("utf-8")
+                if command == "show":window._restore_from_tray()
+                elif command.startswith("preset:"):window.backend.launchPreset(int(command[7:]))
+                peer.disconnectFromServer()
+            elif len(data) > 128:
+                peer.disconnectFromServer()
+        connection.readyRead.connect(read)
+        connection.disconnected.connect(connection.deleteLater)
+        read()
+
+
+def _forward_to_instance(command, *, timeout=2000):
+    socket = QLocalSocket()
+    socket.connectToServer(INSTANCE_SERVER)
+    if not socket.waitForConnected(timeout):
+        return False
+    socket.write(command)
+    socket.waitForBytesWritten(timeout)
+    socket.disconnectFromServer()
+    return True
+
+
+def _claim_instance(app, command):
+    directory = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.RuntimeLocation)
+    os.makedirs(directory, exist_ok=True)
+    lock = QLockFile(os.path.join(directory, "monitorize-app.lock"))
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(0):
+        if _forward_to_instance(command):
+            app_log.write("APP", "Existing instance activated.")
+        else:
+            app_log.write("APP", "Monitorize is already starting or not responding; another instance was not launched.")
+        return None, None
+    # Also respect an older, already-running version which has no lock file.
+    if _forward_to_instance(command, timeout=500):
+        lock.unlock()
+        app_log.write("APP", "Existing instance activated.")
+        return None, None
+    probe = QLocalSocket()
+    probe.connectToServer(INSTANCE_SERVER)
+    if not probe.waitForConnected(500) and probe.error() not in (
+        QLocalSocket.LocalSocketError.ServerNotFoundError,
+        QLocalSocket.LocalSocketError.ConnectionRefusedError,
+    ):
+        lock.unlock()
+        app_log.write("APP", "Existing instance socket is busy; refusing to replace it.")
+        return None, None
+    if probe.state() == QLocalSocket.LocalSocketState.ConnectedState:
+        probe.write(command);probe.waitForBytesWritten(500)
+        lock.unlock()
+        return None, None
+    QLocalServer.removeServer(INSTANCE_SERVER)
+    server = QLocalServer(app)
+    server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
+    if not server.listen(INSTANCE_SERVER):
+        lock.unlock()
+        app_log.write("APP", "Failed to create single-instance server.")
+        return None, None
+    return server, lock
 
 
 def _instance_command(start_in_tray, preset_index):
@@ -300,21 +365,8 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Monitorize")
     app.setDesktopFileName("monitorize")
-    socket = QLocalSocket()
-    socket.connectToServer("monitorize")
-    if socket.waitForConnected(250):
-        from monitorize.desktop.tray_agent import dismiss_tray_agent
-        dismiss_tray_agent()
-        app_log.write("APP", "Existing instance activated.")
-        socket.write(_instance_command(start_in_tray, preset_index))
-        socket.waitForBytesWritten(250)
-        return
-    QLocalServer.removeServer("monitorize")
-    server = QLocalServer(app)
-    server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
-    if not server.listen("monitorize"):
-        app_log.write("APP", "Failed to create single-instance server.")
-        return
+    server, instance_lock = _claim_instance(app, _instance_command(start_in_tray, preset_index))
+    if server is None:return
     _set_palette(app)
     from monitorize.desktop.tray_agent import dismiss_tray_agent
     restored_from_tray = dismiss_tray_agent()
@@ -325,9 +377,11 @@ def main():
         lambda: _handle_instance_command(server, window)
     )
     _show_initial_window(window, start_in_tray)
+    # Connections can arrive while the backend/window is still initializing.
+    _handle_instance_command(server, window)
     if preset_index is not None:
         QTimer.singleShot(0, lambda: window.backend.launchPreset(preset_index))
-    elif _should_start_configured_listeners(sys.argv, restored_from_tray):
+    if _should_start_configured_listeners(sys.argv, restored_from_tray):
         QTimer.singleShot(0, window.backend.startConfiguredListeners)
     sys.exit(app.exec())
 

@@ -124,19 +124,48 @@ def boot_main():
     finally:server.close();host.close()
 
 
+def write_desktop_config(settings, descriptor):
+    """Remove overridden strings from a private snapshot so Auto needs no key=.
+
+    Sunshine rejects empty command-line values. Omitting the CLI flag alone
+    would preserve a stale encoder/adapter from the user's original profile.
+    """
+    import tempfile
+    from monitorize.platform.remote_login_identity import _read_private
+    options=descriptor.get('stream_options')
+    if options is None:return
+    validate_descriptor({k:v for k,v in descriptor.items() if k in
+        ('capture','output_name','pipewire_node','wayland_display','display','stream_options')},settings,descriptor['output_name'])
+    source=Path(settings.profile)/'sunshine.conf'
+    text=_read_private(source,os.getuid()).decode('utf-8')
+    overrides=set(options)|{'encoder','adapter_name'}
+    lines=[line for line in text.splitlines() if line.split('=',1)[0].strip() not in overrides]
+    target=settings.directory/'runtime/desktop-sunshine.conf'
+    fd,name=tempfile.mkstemp(prefix='.desktop-profile-',dir=target.parent)
+    try:
+        with os.fdopen(fd,'w') as output:
+            output.write('\n'.join(lines)+'\n');output.flush();os.fsync(output.fileno())
+        os.replace(name,target)
+    finally:
+        if os.path.exists(name):os.unlink(name)
+
+
 def desktop_command(settings,descriptor):
     values=validate_descriptor({key:value for key,value in descriptor.items() if key in
-        ('capture','output_name','pipewire_node','wayland_display','display')},settings,descriptor['output_name'])
-    config=Path(settings.profile)/'sunshine.conf'
+        ('capture','output_name','pipewire_node','wayland_display','display','stream_options')},settings,descriptor['output_name'])
+    if descriptor.get('desktop','KDE') not in ('KDE','Hyprland','GNOME'):raise ValueError('Unsupported desktop context.')
+    config=(settings.directory/'runtime/desktop-sunshine.conf' if 'stream_options' in values
+            else Path(settings.profile)/'sunshine.conf')
     argv=[str(ENGINE),str(config),'capture='+values['capture'],'output_name='+values['output_name'],
           'upnp=disabled','origin_web_ui_allowed=pc','file_apps='+str(APPS),
-          'encoder='+settings.encoder,
           'log_path='+str(settings.directory/'logs/desktop.log')]
-    if settings.adapter:argv.append('adapter_name='+settings.adapter)
+    options=dict(encoder=settings.encoder,adapter_name=settings.adapter)
+    options.update(values.get('stream_options',{}))
+    argv.extend(key+'='+value for key,value in options.items() if value)
     argv.extend(key+'='+value for key,value in identity_paths(settings.directory).config_overrides().items())
     environment=dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin',LANG='C.UTF-8',HOME=settings.home,
         XDG_RUNTIME_DIR=f'/run/user/{settings.uid}',DBUS_SESSION_BUS_ADDRESS=f'unix:path=/run/user/{settings.uid}/bus',
-        XDG_CURRENT_DESKTOP='KDE',XDG_SESSION_TYPE='wayland',XDG_SEAT='seat0',
+        XDG_CURRENT_DESKTOP=descriptor.get('desktop','KDE'),XDG_SESSION_TYPE='wayland',XDG_SEAT='seat0',
         SUNSHINE_ASSETS_DIR=str(ASSETS),MONITORIZE_REQUIRE_EXACT_OUTPUT='1',
         MONITORIZE_CAPTURE_OUTPUT=values['output_name'])
     if 'pipewire_node' in values:environment['SUNSHINE_PIPEWIRE_NODE']=str(values['pipewire_node'])
@@ -147,6 +176,7 @@ def desktop_command(settings,descriptor):
 
 def desktop_main():
     settings=preflight();descriptor=read_descriptor(settings.runtime/'desktop.json',settings.uid)
+    write_desktop_config(settings,descriptor)
     argv,environment=desktop_command(settings,descriptor)
     owner=EngineOwner(identity_paths(settings.directory));retry=RetrySchedule();stop=_stopping()
     boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
@@ -172,6 +202,7 @@ def desktop_main():
     # A carried boot output can be idle even before the first desktop stream.
     display.deadline=time.monotonic()+20
     listener=ListenerEvidence()
+    startup_error='';startup_deadline=None
     token=secrets.token_hex(32)
     control_path=settings.directory/'runtime/control.sock'
     server=ControlServer(control_path,token,lambda:owner.process,display.request,lock)
@@ -181,8 +212,11 @@ def desktop_main():
         while not stop.is_set():
             if not own_session(descriptor['session'],settings.uid):break
             with lock:
-                if owner.reap() is not None:
+                exited=owner.reap()
+                if exited is not None:
                     display.reset_engine();retry.failed(time.monotonic())
+                    startup_error=f'Sunshine exited (status {exited}). See desktop-console.log.'
+                    print(startup_error,flush=True)
                 if display.due():
                     try:display.expire()
                     except Exception as error:
@@ -190,12 +224,25 @@ def desktop_main():
                         display.deadline=time.monotonic()+5
                 if not owner.running and (retry.deadline is None or retry.due(time.monotonic())):
                     try:
-                        owner.start(argv,environment,prepare=lambda:rotate_startup_log(log))
-                        listener=ListenerEvidence()
-                    except (OSError,ValueError,RuntimeError):retry.failed(time.monotonic())
+                        owner.start(argv,environment,prepare=lambda:rotate_startup_log(log),
+                                    diagnostics=settings.directory/'logs/desktop-console.log')
+                        listener=ListenerEvidence();startup_deadline=time.monotonic()+45
+                    except (OSError,ValueError,RuntimeError) as error:
+                        retry.failed(time.monotonic())
+                        startup_error='Sunshine startup failed: '+type(error).__name__+': '+str(error)[:256]
+                        print(startup_error,flush=True)
                 health=dict(listening=bool(owner.running and listener.read(log)),
                             capture_ready=bool(owner.running and display.frames_ready))
+                if health['listening']:
+                    startup_error='';startup_deadline=None
+                elif owner.running and startup_deadline is not None and time.monotonic()>=startup_deadline:
+                    owner.stop();display.reset_engine();retry.failed(time.monotonic())
+                    startup_error='Sunshine did not start listening within 45 seconds. See desktop-console.log.'
+                    startup_deadline=None
+                    print(startup_error,flush=True)
                 if health['capture_ready']:retry.healthy()
+                health['startup_error']=startup_error
+                if startup_error:health['retry_seconds']=max(0,int((retry.deadline or time.monotonic())-time.monotonic()))
                 write_health(settings.directory/'runtime/desktop-health.json',dict(health,pid=os.getpid(),
                     boot_id=boot_id,time=time.monotonic(),session=descriptor['session'],state=display.state))
             stop.wait(.25)

@@ -19,6 +19,7 @@ class Session(QObject):
         self.running = False
         self.start_requested = False
         self._driving = False
+        self.runtime_configuration = None
         self.preset_configuration = None
         self.count = self._configured_display_count()
         controller.streamingChanged.connect(self._active_changed)
@@ -61,7 +62,7 @@ class Session(QObject):
         return True
 
     def display_behavior(self):
-        settings = self.preset_configuration if self.preset_configuration is not None else load_general_settings()
+        settings = self.preset_configuration if self.preset_configuration is not None else (self.runtime_configuration or load_general_settings())
         return settings.get('display_behavior', 'extend')
 
     def uses_managed_runtime(self):
@@ -71,7 +72,7 @@ class Session(QObject):
         """Save configured intent, including a listener that has no display yet."""
         if self.preset_configuration:
             return copy.deepcopy(self.preset_configuration)
-        primary, second = load_display_settings(), load_second_display_settings()
+        primary, second = self._primary_settings(), self._second_settings()
         for raw in (primary, second):
             values = self._saved_values(raw)
             raw["resolution"], raw["fps"] = values["res"], values["fps"]
@@ -96,7 +97,7 @@ class Session(QObject):
             config = {**config, "de": self.controller.de,
                       "display_behavior": self.display_behavior(),
                       "resolution": config["res"],
-                      "client_restart_on_crash": general.get("client_restart_on_crash", False)}
+                      "client_restart_on_crash": True}
             if not runtime.start_slot(instance, config):
                 self.controller._set_status(str(runtime.error))
                 self.controller.startFailed.emit()
@@ -138,10 +139,16 @@ class Session(QObject):
         if self.start_requested:
             QTimer.singleShot(0, self._drive_start)
 
+    def _primary_settings(self):
+        return copy.deepcopy(self.runtime_configuration["primary"]) if self.runtime_configuration else load_display_settings()
+
+    def _second_settings(self):
+        return copy.deepcopy(self.runtime_configuration["second"]) if self.runtime_configuration else load_second_display_settings()
+
     def configuration(self):
         if self.preset_configuration:
             return self._preset_values(self.preset_configuration["primary"])
-        return self._saved_values(load_display_settings())
+        return self._saved_values(self._primary_settings())
 
     @staticmethod
     def _saved_values(saved, *, virtual_display_creator=None):
@@ -193,14 +200,14 @@ class Session(QObject):
             return config
         primary = self.configuration()
         return self._saved_values(
-            load_second_display_settings(),
+            self._second_settings(),
             virtual_display_creator=primary["virtual_display_creator"],
         )
 
     def _configured_display_count(self):
         if self.configuration()["display_type"] != "Extend":
             return 0
-        return 2 if load_second_display_settings().get("enabled", False) else 1
+        return 2 if self._second_settings().get("enabled", False) else 1
 
     def _prepare_primary(self):
         config = self.configuration()

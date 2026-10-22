@@ -130,3 +130,33 @@ def migrate_identity(source,destination, *, uid):
         finally:
             if stage.exists():shutil.rmtree(stage)
     return {'changed':True,'directory':str(destination),'backup':str(source)}
+
+
+def fallback_grant_path(uid):
+    return Path('/run/monitorize/desktop-fallback')/(str(uid)+'.json')
+
+
+def _fallback_context():
+    import subprocess
+    boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    session=os.environ.get('XDG_SESSION_ID','')
+    if not session:
+        session=subprocess.run(['loginctl','show-user',str(os.getuid()),'--property=Display','--value'],
+            capture_output=True,text=True,timeout=3,check=True).stdout.strip()
+    return boot,session
+
+
+def desktop_fallback_allowed(settings, *, owner_uid=0):
+    """Root grants desktop ownership only for this boot/account/login session."""
+    path=fallback_grant_path(settings.uid)
+    try:
+        parent=path.parent.lstat()
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid!=owner_uid or parent.st_mode & 0o022:return False
+        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+        with os.fdopen(fd) as stream:
+            info=os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=owner_uid or info.st_mode & 0o022 or info.st_size>4096:return False
+            grant=json.load(stream)
+        boot,session=_fallback_context()
+        return bool(session and grant==dict(uid=settings.uid,session=session,boot_id=boot))
+    except (OSError,ValueError,TypeError):return False

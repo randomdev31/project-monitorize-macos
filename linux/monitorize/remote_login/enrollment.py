@@ -131,8 +131,8 @@ def restore_linger(uid,*,commands):
 def enable(uid):
     if type(uid) is not int or uid<=0:raise RuntimeError('Select a non-root account.')
     account=pwd.getpwuid(uid)
-    if Path('/etc/systemd/system/display-manager.service').resolve().name!='plasmalogin.service':
-        raise RuntimeError('This release validates remote login only with Plasma Login Manager.')
+    from .display_managers import require_manager
+    manager=require_manager()
     for path in (ENGINE,ASSETS,APPS,Path('/usr/lib/systemd/system/monitorize-vkms-boot-display.service')):require_installed(path)
     sys.path.insert(0,'/usr/lib/monitorize-vkms')
     from monitorize_vkms import helper
@@ -174,7 +174,7 @@ def enable(uid):
         if info.st_uid not in (0,uid) or info.st_mode & 0o077:raise RuntimeError('Unsafe identity runtime ownership.')
         os.chown(path,uid,account.pw_gid)
     values=dict(schema_version=1,enabled=True,uid=uid,gid=account.pw_gid,username=account.pw_name,
-                home=account.pw_dir,profile=str(profile),manager='plasmalogin.service',encoder='software',adapter='')
+                home=account.pw_dir,profile=str(profile),manager=manager['manager'],encoder='software',adapter='')
     if existing is not None:values.update(encoder=existing.encoder,adapter=existing.adapter)
     caps=commands.run(['/usr/sbin/getcap','--',str(ENGINE)])
     old_caps=caps.removeprefix(str(ENGINE)).strip()
@@ -200,7 +200,7 @@ def disable(uid):
     with acquire_identity_lock(identity_paths(settings.directory),uid=uid):pass
     files=RootFiles()
     values=dict(schema_version=1,enabled=False,uid=settings.uid,gid=settings.gid,username=settings.username,
-                home=settings.home,profile=settings.profile,manager='plasmalogin.service',encoder=settings.encoder,adapter=settings.adapter)
+                home=settings.home,profile=settings.profile,manager=getattr(settings,'manager','plasmalogin.service'),encoder=settings.encoder,adapter=settings.adapter)
     configure_disabled(values,files=files,commands=commands)
     restore_linger(uid,commands=commands)
     try:remove_reserved(uid)
@@ -210,7 +210,7 @@ def disable(uid):
     return dict(success=True,reboot_required=False,message='Boot startup disabled. Normal streaming is available now. Pairing and Wi-Fi settings are retained.')
 
 
-def remove_reserved(uid):
+def remove_reserved(uid, *, release=False):
     """Administrator recovery only when coordinator and engine cgroups exited."""
     settings=read_settings()
     if uid!=settings.uid:raise PermissionError('Only the enrolled account may remove its display.')
@@ -242,9 +242,39 @@ def remove_reserved(uid):
         with acquire_identity_lock(identity_paths(settings.directory),uid=uid):
             from monitorize_vkms import helper
             session,_=helper._active_session(uid)
-            desktop_operation_installed(uid,session,'idle' if settings.enabled else 'release',engines_stopped=True)
+            desktop_operation_installed(uid,session,'release' if release or not settings.enabled else 'idle',engines_stopped=True)
         return dict(success=True,changed=True,message='Reserved remote-login display removed. '+('Pairing and reservation retained.' if settings.enabled else 'Slot released for normal streaming; pairing retained.'))
     finally:bus.close()
+
+
+DESKTOP_FALLBACK_PROTOCOL = 1
+
+
+def desktop_fallback(uid):
+    """Pause managed ownership until reboot; retain enrollment and pairing."""
+    settings=read_settings()
+    if uid!=settings.uid:raise PermissionError('Only the enrolled account can start desktop fallback.')
+    sys.path.insert(0,'/usr/lib/monitorize-vkms')
+    from monitorize_vkms import helper
+    session,_=helper._active_session(uid)
+    commands=Commands()
+    units=['monitorize-remote-login.service',f'monitorize-remote-login-boot@{uid}.service',
+           f'monitorize-remote-login-desktop@{uid}.service']
+    # /run masks disappear at reboot; persistent enablement is untouched.
+    commands.run(['/usr/bin/systemctl','mask','--runtime',*units])
+    commands.run(['/usr/bin/systemctl','stop',*units])
+    for unit in units:
+        if commands.run(['/usr/bin/systemctl','show',unit,'--property=LoadState','--value'])!='masked':
+            raise RuntimeError('The boot engine could not be paused safely until reboot.')
+    # Verifies coordinator cgroups, both managed engines and identity lock before
+    # releasing the protected mon1 lease. No boot configuration is rewritten.
+    remove_reserved(uid,release=True)
+    actual,_=helper._active_session(uid)
+    if actual!=session:raise RuntimeError('Desktop session changed during fallback.')
+    from monitorize.platform.remote_login_identity import fallback_grant_path
+    grant=dict(uid=uid,session=session,boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+    RootFiles().write(str(fallback_grant_path(uid)).lstrip('/'),json.dumps(grant),0o644)
+    return dict(success=True,message='Desktop streaming is available. Start at boot remains enabled for the next reboot.')
 
 
 def main(action):
@@ -252,7 +282,7 @@ def main(action):
     require_installed(__file__)
     raw=os.environ.get('PKEXEC_UID','')
     if not raw.isdigit() or int(raw)<=0:raise RuntimeError('Run setup through Monitorize administrator authorization.')
-    try:result={'enable':enable,'disable':disable,'remove':remove_reserved}[action](int(raw))
+    try:result={'enable':enable,'disable':disable,'remove':remove_reserved,'fallback':desktop_fallback}[action](int(raw))
     except Exception as error:
         result={'success':False,'message':str(error)}
     print(json.dumps(result));return 0 if result['success'] else 1

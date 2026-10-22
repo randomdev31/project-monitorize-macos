@@ -604,7 +604,9 @@ def _enrolled_manual_identity(instance):
     if settings.uid != os.getuid():
         return None
     if settings.enabled:
-        raise RuntimeError("Remote login owns instance 1. Use the Session page to start or stop it.")
+        from monitorize.platform.remote_login_identity import desktop_fallback_allowed
+        if not desktop_fallback_allowed(settings):
+            raise RuntimeError("Remote login owns instance 1. Use the Session page to start or stop it.")
     from monitorize.platform.remote_login_identity import identity_paths
     # Disabling boot access does not resurrect the pre-enrollment pairing copy.
     return identity_paths(settings.directory)

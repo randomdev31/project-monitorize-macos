@@ -8,7 +8,7 @@ elif sys.argv[1:]==['boot']:
     from monitorize.remote_login.runner import boot_main as main
 elif sys.argv[1:]==['desktop']:
     from monitorize.remote_login.runner import desktop_main as main
-elif sys.argv[1:] in (['setup-enable'],['setup-disable'],['setup-remove']):
+elif sys.argv[1:] in (['setup-enable'],['setup-disable'],['setup-remove'],['setup-fallback']):
     from monitorize.remote_login.enrollment import main as setup
     def main():return setup(sys.argv[1].removeprefix('setup-'))
 else:

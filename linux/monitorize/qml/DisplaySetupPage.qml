@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 Item {
     id: page
+    objectName: "displaySetupPage"
     property string returnPageSource: "DisplaySetupPage.qml"
     property bool loading: true
     property var mirrorOutputs: []
@@ -103,8 +104,8 @@ Item {
     Timer {
         id: mirrorPoll
         interval: 2000; repeat: true
-        running: !page.loading && backend.uiVisible && !backend.isStreaming
-            && !backend.sessionBusy && displayType.currentText === "Mirror"
+        running: !page.loading && backend.uiVisible && !backend.applyingConfiguration
+            && !backend.applyingConfiguration && displayType.currentText === "Mirror"
             && page.StackView.view && page.StackView.view.currentItem === page
         onRunningChanged: {
             if (running) Qt.callLater(function() { if (running) page.refreshMirrorOutputs() })
@@ -238,18 +239,10 @@ Item {
         ColumnLayout {
             width: parent.width
             spacing: 14
-            Text { text: "Configuration"; color: theme.textPrimary; font.pixelSize: 28; font.weight: Font.Bold; Layout.bottomMargin: 6 }
-            Text {
-                visible: backend.isStreaming || backend.sessionBusy
-                text: "Stop the session to change display configuration."
-                color: theme.textMuted
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
             SectionCard {
                 title: "DISPLAY"; symbol: "display"
                 Layout.fillWidth: true
-                enabled: !backend.isStreaming && !backend.sessionBusy
+                enabled: !backend.applyingConfiguration
                 GridLayout {
                     Layout.fillWidth: true
                     columns: 2; columnSpacing: 24; rowSpacing: 12
@@ -346,7 +339,7 @@ Item {
                         vkmsSelected: page.vkmsSelected
                         nativeResolutionOptions: page.nativeResolutionOptions
                         vkmsResolutionOptions: backend.vkmsResolutionOptions
-                        sunshineEnabled: !backend.isStreaming && !backend.sessionBusy
+                        sunshineEnabled: !backend.applyingConfiguration
                             && !createOnly.checked && backend.sunshineAvailable
                         onConfigurationChanged: function(configuration) {
                             let targetIndex = modeCard.displayNumber > 0 ? (modeCard.displayNumber - 1) : modeCard.index
@@ -358,7 +351,7 @@ Item {
                 AbstractButton {
                     id: addDisplayButton
                     visible: displayType.currentText === "Extend" && page.virtualDisplays.length < 2
-                    enabled: !backend.sessionBusy
+                    enabled: !backend.applyingConfiguration
                     Layout.fillWidth: true
                     implicitHeight: 54
                     onClicked: page.addDisplay()
@@ -379,7 +372,7 @@ Item {
                 title: "SUNSHINE · MIRROR"; symbol: "streaming"
                 Layout.fillWidth: true
                 visible: displayType.currentText === "Mirror"
-                enabled: !backend.sessionBusy && !createOnly.checked && backend.sunshineAvailable
+                enabled: !backend.applyingConfiguration && !createOnly.checked && backend.sunshineAvailable
                 Loader {
                     Layout.fillWidth: true
                     active: displayType.currentText === "Mirror"
@@ -394,7 +387,7 @@ Item {
             SectionCard {
                 title: "ADVANCED"; symbol: "settings"; expanded: false
                 Layout.fillWidth: true
-                enabled: !backend.isStreaming
+                enabled: !backend.applyingConfiguration
                 RowLayout {
                     Layout.fillWidth: true
                     CustomCheckBox {
@@ -413,6 +406,49 @@ Item {
                     Item { Layout.fillWidth: true }
                 }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    text: backend.applyingConfiguration ? backend.configurationMessage
+                        : backend.configurationDirty ? (backend.configurationValidationMessage || "Unapplied changes") : backend.configurationRestartRequired ? "Changes saved. Restart required." : backend.configurationMessage
+                    color: theme.textSecondary
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+                CustomButton {
+                    objectName: "applyConfigurationButton"
+                    text: backend.applyingConfiguration ? "Applying…" : "Apply"
+                    enabled: backend.configurationDirty && backend.configurationValid && !backend.applyingConfiguration
+                    onClicked: {
+                        page.commitAllPendingDisplaySettings()
+                        applyConfirmation.open()
+                    }
+                }
+            }
         }
     }
+    Dialog {
+        id: applyConfirmation
+        objectName: "applyConfigurationDialog"
+        title: "Restart to apply changes"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(440, page.width - 24)
+        background: Rectangle { color: theme.surface; border.color: theme.border; radius: theme.cardRadius }
+        contentItem: Text {
+            text: backend.streamingBackend === "none"
+                ? (backend.appliedStreamingBackend === "none"
+                    ? "Save these changes? An active display will be recreated."
+                    : "The current session will stop and any connected stream will disconnect. Display-only mode will not start Sunshine.")
+                : "Restart now to apply your changes, or save them for the next restart. Restarting disconnects any connected stream."
+            color: theme.textPrimary
+            wrapMode: Text.WordWrap
+        }
+        onAccepted: backend.applyConfiguration()
+        footer: DialogButtonBox {
+            CustomButton { objectName: "restartLaterButton"; text: "Restart later"; primary: false; DialogButtonBox.buttonRole: DialogButtonBox.ActionRole; onClicked: { applyConfirmation.close(); backend.saveConfigurationForLater() } }
+            CustomButton { text: "Restart"; DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole }
+        }
+    }
+
 }

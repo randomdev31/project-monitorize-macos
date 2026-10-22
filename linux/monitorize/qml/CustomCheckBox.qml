@@ -5,6 +5,8 @@ CheckBox {
     id: chk
     hoverEnabled: true
     property bool keepCheckedBlue: false
+    property bool expandableLabel: false
+    signal labelClicked()
 
     indicator: Rectangle {
         implicitWidth: 16
@@ -37,4 +39,20 @@ CheckBox {
         wrapMode: Text.WordWrap
         verticalAlignment: Text.AlignVCenter
     }
+    // Pointer clicks toggle only inside the visible square. Keyboard activation
+    // remains handled by CheckBox for accessibility.
+    MouseArea {
+        anchors.fill: parent
+        onPressed: function(mouse) {
+            let box = chk.indicator
+            if (mouse.x >= box.x && mouse.x <= box.x + box.width &&
+                mouse.y >= box.y && mouse.y <= box.y + box.height)
+                mouse.accepted = false
+        }
+        onClicked: function(mouse) {
+            if (chk.expandableLabel && mouse.x >= chk.contentItem.x + chk.contentItem.leftPadding)
+                chk.labelClicked()
+        }
+    }
+
 }

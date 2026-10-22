@@ -48,6 +48,10 @@ def validate_bundle(stage):
                      'usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service'})|{'usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/greeter_display.py',
+                   'usr/lib/monitorize-remote-login/monitorize/remote_login/display_managers.py',
+                   'usr/lib/monitorize-remote-login/monitorize/remote_login/wayland_greeter.py',
+                   'usr/lib/monitorize-remote-login/monitorize/remote_login/session_context.py',
+                   'usr/lib/monitorize-remote-login/monitorize/remote_login/gdm_context.py',
                    'usr/share/monitorize/sunshine/assets/web/index.html'}
     for relative in required:
         path=stage/relative

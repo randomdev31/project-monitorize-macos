@@ -62,3 +62,106 @@ class RuntimeStateTests(unittest.TestCase):
             self.assertFalse(RemoteLoginRuntime.active.fget(SimpleNamespace(enabled=True,status={'state':state})))
         for state in ('desktop_listening','desktop_available','disconnect_grace','desktop_starting'):
             self.assertTrue(RemoteLoginRuntime.active.fget(SimpleNamespace(enabled=True,status={'state':state})))
+
+
+class LegacyStreamOptionsTests(unittest.TestCase):
+    def test_codec_profile_update_is_atomic_and_preserves_identity(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from monitorize.desktop.remote_login_runtime import legacy_stream_options
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'sunshine.conf'
+            path.write_text('hevc_mode = 2\nav1_mode = 1\ncert = keep-me\n')
+            settings=SimpleNamespace(profile=directory,encoder='software',adapter='')
+            options=dict(encoder='software',adapter_name='',hevc_mode='0',av1_mode='0')
+            with patch('monitorize.desktop.remote_login_runtime.read_settings',return_value=settings):
+                legacy_stream_options(options)
+                self.assertIn('hevc_mode = 2',path.read_text())
+                legacy_stream_options(options,write=True)
+                self.assertIn('hevc_mode = 0',path.read_text())
+                self.assertIn('cert = keep-me',path.read_text())
+                with self.assertRaisesRegex(ValueError,'encoder and GPU'):
+                    legacy_stream_options(dict(options,encoder='nvenc'),write=True)
+
+
+class ResumeOwnershipTests(unittest.TestCase):
+    def setUp(self):
+        from monitorize.remote_login.service import HandoffService
+        from test_remote_login_service import Sessions,Units
+        self.sessions=Sessions();self.sessions.user=True
+        self.active=True
+        original=self.sessions.snapshot
+        def snapshot():
+            values=original()
+            for session in values['sessions']:session['active']=self.active
+            return values
+        self.sessions.snapshot=snapshot
+        self.units=Units();self.service=HandoffService(1000,self.sessions,self.units)
+        self.service.tick();service=self.service
+        self.acquisitions=0
+        test=self
+        class Adapter:
+            def GetStatus(self,**kw):return json.dumps(service.status())
+            def AcquireDesktop(self,**kw):
+                test.acquisitions+=1
+                return json.dumps(service.acquire(':1.10'))
+            def PrepareDesktop(self,generation,descriptor,**kw):
+                return json.dumps(service.start_desktop(':1.10',generation,json.loads(descriptor)))
+            def Stop(self,generation,**kw):return json.dumps(service.stop(':1.10',generation))
+            def Start(self,**kw):return json.dumps(service.start(':1.10'))
+        self.participant=Participant(factory=Adapter,output_finder=lambda:'Virtual-1')
+        mocked=patch('monitorize.desktop.remote_login_runtime.saved_stream_options',return_value={})
+        mocked.start();self.addCleanup(mocked.stop)
+
+    def test_resume_reacquires_revoked_token_without_service_restart(self):
+        self.participant.poll();first=self.participant.generation;epoch=self.service.epoch
+        self.assertTrue(self.units.desktop)
+        self.active=False;self.service.tick()
+        self.assertFalse(self.units.desktop)
+        # App need not observe the suspended state before the laptop freezes.
+        self.active=True;self.service.tick()
+        self.assertEqual(self.participant.poll()['state'],'desktop_starting')
+        self.assertTrue(self.units.desktop)
+        self.assertNotEqual(first,self.participant.generation)
+        self.assertEqual(self.acquisitions,2)
+        self.assertEqual(epoch,self.service.epoch)
+
+    def test_multiple_sleep_cycles_recover_once_each(self):
+        self.participant.poll()
+        generations={self.participant.generation}
+        for _ in range(3):
+            self.active=False;self.service.tick()
+            self.participant.poll()
+            self.assertEqual(self.participant.generation,'')
+            self.active=True;self.service.tick()
+            self.assertEqual(self.participant.poll()['state'],'desktop_starting')
+            generations.add(self.participant.generation)
+            self.participant.poll()
+        self.assertEqual(self.acquisitions,4)
+        self.assertEqual(len(generations),4)
+
+    def test_other_account_is_not_captured_after_sleep(self):
+        self.participant.poll()
+        self.active=False;self.service.tick()
+        self.sessions.other=True;self.active=True;self.service.tick()
+        self.assertEqual(self.participant.poll()['state'],'suspended')
+        self.assertFalse(self.units.desktop)
+        self.assertEqual(self.acquisitions,1)
+
+    def test_intentional_stop_is_preserved_across_suspend_resume(self):
+        self.participant.poll();self.participant.stop()
+        self.active=False;self.service.tick()
+        self.active=True;self.service.tick()
+        self.assertEqual(self.participant.poll()['state'],'stopped')
+        self.assertFalse(self.units.desktop)
+        self.assertEqual(self.acquisitions,1)
+        self.participant.start()
+        self.assertTrue(self.units.desktop)
+
+    def test_rejected_token_does_not_claim_service_is_offline(self):
+        from monitorize.remote_login.dbus_service import Rejected
+        self.participant.poll()
+        with patch.object(self.participant,'_call',side_effect=Rejected('ownership revoked')):
+            self.assertEqual(self.participant.poll()['state'],'ownership_wait')
+        self.assertEqual(self.participant.generation,'')

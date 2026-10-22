@@ -14,6 +14,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FirstRunSetupTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        config = patch.multiple(settings, CONFIG_DIR=self.temp.name, CONFIG_FILE=str(Path(self.temp.name)/"settings.ini"))
+        config.start();self.addCleanup(config.stop)
+
 
     def test_reset_sunshine_settings_refuses_a_live_settings_process(self):
         fake = SimpleNamespace(isStreaming=False, sessionBusy=False,
@@ -103,7 +109,7 @@ class FirstRunSetupTest(unittest.TestCase):
     @patch("monitorize.desktop.backend.get_local_ip", return_value="192.0.2.1")
     @patch("monitorize.desktop.backend.StreamingController")
     @patch("monitorize.desktop.backend.get_system_setup_status", return_value={"available": False})
-    def test_webpage_settings_are_imported_before_session_start(
+    def test_webpage_settings_do_not_replace_applied_snapshot_on_start(
         self, _status, _streaming, _ip, _presets, _settings
     ):
         backend = MonitorizeBackend("kde")
@@ -119,13 +125,13 @@ class FirstRunSetupTest(unittest.TestCase):
             start.assert_called_once()
             imported = backend.loadDisplaySettings()
         saved = settings.load_display_settings()
-        self.assertEqual(saved["sunshine_encoder"], "Software")
-        self.assertEqual(saved["sunshine_codec"], "H.264")
-        self.assertTrue(saved["streaming_customized"])
-        self.assertFalse(saved["sunshine_native_pen_touch"])
-        self.assertTrue(saved["enable_audio"])
-        self.assertEqual(backend.session.configuration()["encoder"], "Software")
-        self.assertEqual(imported["sunshine_codec"], "H.264")
+        self.assertEqual(saved["sunshine_encoder"], "Auto")
+        self.assertEqual(saved["sunshine_codec"], "Auto")
+        self.assertFalse(saved["streaming_customized"])
+        self.assertTrue(saved["sunshine_native_pen_touch"])
+        self.assertFalse(saved["enable_audio"])
+        self.assertEqual(backend.session.configuration()["encoder"], "Auto")
+        self.assertEqual(imported["sunshine_codec"], "Auto")
 
     @patch("monitorize.desktop.backend.get_sunshine_config_dir")
     @patch("monitorize.desktop.backend.app_log.read_tail")

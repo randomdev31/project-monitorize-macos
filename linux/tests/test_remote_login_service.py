@@ -30,6 +30,17 @@ class ServiceTests(unittest.TestCase):
         self.service.tick();self.sessions.user=True
         self.service.tick();return self.service.acquire(':1.10')
 
+    def test_engine_startup_error_is_visible_and_clears_when_listening(self):
+        token=self.login()['generation'];self.service.start_desktop(':1.10',token,{})
+        self.units.readiness=lambda phase:({'listening':False,'startup_error':'Sunshine exited (status 0)'} if phase=='desktop' else {})
+        self.service.tick()
+        self.assertEqual(self.service.status()['state'],'error')
+        self.assertIn('status 0',self.service.status()['startup_error'])
+        self.units.readiness=lambda phase:({'listening':True,'state':'desktop_listening'} if phase=='desktop' else {})
+        self.service.tick()
+        self.assertEqual(self.service.status()['state'],'desktop_listening')
+        self.assertEqual(self.service.status()['startup_error'],'')
+
     def test_complete_login_and_logout_cycle(self):
         result=self.login();self.assertTrue(result['granted']);token=result['generation']
         self.service.start_desktop(':1.10',token,{})

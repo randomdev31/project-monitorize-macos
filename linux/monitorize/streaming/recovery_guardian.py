@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 
-from monitorize.platform.session_layout import KdeLayout, LayoutTransaction, layout_supported
+from monitorize.platform.session_layout import KdeLayout, LayoutTransaction, layout_supported, current_layout_backend
 
 MAX_FRAME = 65536
 
@@ -44,7 +44,7 @@ def recover_before_cleanup():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return False
-        LayoutTransaction(KdeLayout(), directory / f'{suffix}.json', 'primary').recover()
+        LayoutTransaction(current_layout_backend(), directory / f'{suffix}.json', 'primary').recover()
         return True
     finally:
         os.close(lock)
@@ -76,7 +76,7 @@ class GuardianClient:
         if self.process and self.process.poll() is None:
             return
         if not layout_supported(self.desktop):
-            raise RuntimeError('Primary and virtual-only modes currently require native KDE Wayland.')
+            raise RuntimeError('Primary and virtual-only modes require a supported native KDE/Hyprland/GNOME Wayland session.')
         Path(self.path).unlink(missing_ok=True)
         args = [sys.executable, '-m', __name__, 'serve', self.path, self.token, self.mode, str(os.getpid())]
         self.process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -119,6 +119,7 @@ class Guardian:
         self.lock = asyncio.Lock()
         self.holders = {}
         self.reserved = set()
+        self.borrowed = set()
         self.pending_release = set()
         self.stopping = False
         self.recovery_pending = False
@@ -158,6 +159,7 @@ class Guardian:
                 self.holders.pop(slot, None)
             await self._layout('release', slot)
             self.reserved.discard(slot)
+            self.borrowed.discard(slot)
             self.pending_release.discard(slot)
 
     async def handle(self, reader, writer):
@@ -178,12 +180,32 @@ class Guardian:
                     if mode not in ('primary', 'virtual_only') or (self.reserved and self.layout.mode != mode):
                         raise RuntimeError('Stop all displays before changing display behavior.')
                     self.layout.mode = mode
+            elif operation == 'attach':
+                # Borrow only layout control; the root coordinator retains the
+                # VKMS reservation and is solely responsible for its removal.
+                slot=request.get('slot');name=request.get('name')
+                if type(slot) is not int or slot!=1 or not isinstance(name,str) or not name.startswith('Virtual-') or not name[8:].isdigit():
+                    raise ValueError('Invalid remote display identity.')
+                async with self.lock:
+                    if self.stopping or slot in self.reserved:
+                        raise RuntimeError('Display layout is already owned or recovering.')
+                    outputs=await asyncio.to_thread(self.layout.backend.outputs)
+                    if not any(o['name']==name and self.layout.backend.active(o) for o in outputs):
+                        raise RuntimeError('Remote display is not active.')
+                    await self._layout('reserve',slot,(name,))
+                    await self._layout('ready',slot,name)
+                    self.reserved.add(slot);self.borrowed.add(slot)
+            elif operation == 'detach':
+                slot=request.get('slot')
+                if type(slot) is not int or slot!=1 or slot in self.holders:
+                    raise ValueError('Unknown borrowed display.')
+                if slot in self.borrowed:await self.release(slot)
             elif operation == 'hold':
                 slot = request['slot']
                 args = request['args']
                 if type(slot) is not int or slot not in (1, 2) or not isinstance(args, list) or len(args) != 6:
                     raise ValueError('Invalid display holder request.')
-                if args[4] != 'kde' or args[5] not in ('native', 'vkms'):
+                if not (args[4]=='kde' and args[5] in ('native','vkms') or args[4]=='gnome' and args[5]=='vkms'):
                     raise ValueError('Unsupported guarded display backend.')
                 async with self.lock:
                     if self.stopping or slot in self.reserved:
@@ -203,7 +225,7 @@ class Guardian:
             elif operation in ('ready', 'stream'):
                 slot = request['slot']
                 async with self.lock:
-                    if slot not in self.holders:
+                    if slot not in self.holders and slot not in self.borrowed:
                         raise RuntimeError('Unknown display holder generation.')
                     if operation == 'ready':
                         await self._layout('ready', slot, request['name'])
@@ -215,7 +237,7 @@ class Guardian:
                             raise
             else:
                 raise ValueError('Unknown guardian operation.')
-            writer.write(_frame({'ok': True}))
+            writer.write(_frame({'ok': True, 'borrowed': sorted(self.borrowed)}))
             await writer.drain()
         except Exception as exc:
             if slot in self.reserved and not hold:
@@ -316,7 +338,7 @@ def _serve(args):
     with (directory / f'{suffix}.log').open('a') as log:
         os.dup2(log.fileno(), 1)
         os.dup2(log.fileno(), 2)
-        transaction = LayoutTransaction(KdeLayout(), directory / f'{suffix}.json', args.mode)
+        transaction = LayoutTransaction(current_layout_backend(), directory / f'{suffix}.json', args.mode)
         guardian = Guardian(args.path, args.token, args.mode, args.owner, transaction)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

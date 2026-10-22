@@ -55,7 +55,7 @@ Rectangle {
     }
 
     function navigate(page) {
-        if (page === selectedPage) {
+        if (page === selectedPage && stack.depth === 1) {
             pendingNavigation = ""
             return
         }
@@ -67,7 +67,24 @@ Rectangle {
             stack.currentItem.commitAllPendingDisplaySettings()
         }
         selectedPage = page
-        stack.replace(page)
+        stack.replace(null, page)
+    }
+
+    function showConfigurationDraft() {
+        if (stack.busy) {
+            draftNavigationTimer.restart()
+            return
+        }
+        pendingNavigation = ""
+        selectedPage = "DisplaySetupPage.qml"
+        // The backend has replaced the draft; never flush stale controls over it.
+        stack.replace(null, "DisplaySetupPage.qml")
+    }
+
+    Timer {
+        id: draftNavigationTimer
+        interval: 80
+        onTriggered: showConfigurationDraft()
     }
 
     function removeStagnantVirtualDisplays() {
@@ -80,6 +97,17 @@ Rectangle {
         restoreTokenClearMessage = result["message"] || "No restore tokens were found"
         restoreTokenClearToast.open()
         restoreTokenClearToastTimer.restart()
+    }
+
+    Connections {
+        target: backend
+        function onConfigureDisplayRequestedForDraft() { showConfigurationDraft() }
+        function onConfigurationApplyFinished(success, message) {
+            root.stagnantCleanupSucceeded = success
+            root.stagnantCleanupMessage = message
+            stagnantCleanupToast.open()
+            stagnantCleanupToastTimer.restart()
+        }
     }
 
     Theme {
