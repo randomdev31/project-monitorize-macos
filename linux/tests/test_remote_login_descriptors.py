@@ -48,6 +48,24 @@ class DescriptorTests(unittest.TestCase):
         self.root.symlink_to(Path(self.temp.name),target_is_directory=True)
         with self.assertRaises(ValueError):self.store.write(self.caller,self.token,{'capture':'kms','output_name':'Virtual-4'})
 
+    def test_disconnected_protected_reservation_can_start_listener_after_physical_greeter(self):
+        self.store.output_finder=lambda:'Virtual-0'
+        lease=dict(schema_version=2,protected=True,owner_kind='remote-login',uid=os.getuid(),
+                   phase='desktop',session='s1',state='reserved')
+        self.adopt.return_value=lease
+        result=self.store.write(self.caller,self.token,{'capture':'kms','output_name':'Virtual-0'})
+        self.assertEqual(result['output_name'],'Virtual-0')
+        self.assertNotIn('connector',lease)
+        self.assertTrue((self.root/str(os.getuid())/'desktop.json').is_file())
+        # Never accept another account/session, partial or mismatched DRM identity,
+        # an unprotected output or an active lease missing its connector identity.
+        for changes in ({'uid':os.getuid()+1},{'session':'other'},{'protected':False},
+                        {'state':'active'},{'connector':'Virtual-8'}, {'card':'card2'},
+                        {'connector_id':3},{'owner_kind':'ordinary'},{'phase':'greeter'}):
+            self.adopt.return_value=dict(lease,**changes)
+            with self.subTest(changes=changes),self.assertRaises(RuntimeError):
+                self.store.write(self.caller,self.token,{'capture':'kms','output_name':'Virtual-0'})
+
     def test_wrong_output_after_adoption_is_not_published(self):
         self.adopt.return_value={'connector':'Virtual-5'}
         with self.assertRaises(RuntimeError):self.store.write(self.caller,self.token,{'capture':'kms','output_name':'Virtual-4'})

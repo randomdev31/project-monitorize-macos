@@ -41,6 +41,14 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.service.status()['state'],'desktop_listening')
         self.assertEqual(self.service.status()['startup_error'],'')
 
+    def test_boot_display_error_is_visible_without_claiming_capture_ready(self):
+        self.service.tick()
+        self.units.readiness=lambda phase:({'listening':True,'startup_error':'Remote display preparation failed.'} if phase=='boot' else {})
+        status=self.service.tick()
+        self.assertEqual(status['state'],'error')
+        self.assertIn('preparation failed',status['startup_error'])
+        self.assertFalse(status['capture_ready'])
+
     def test_complete_login_and_logout_cycle(self):
         result=self.login();self.assertTrue(result['granted']);token=result['generation']
         self.service.start_desktop(':1.10',token,{})

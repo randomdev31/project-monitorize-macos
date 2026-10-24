@@ -81,9 +81,10 @@ def boot_main():
     def remove():
         owner.stop()
         engine_call('idle')
-    display=IdleDisplay(lambda:engine_call('prepare'),remove)
+    display=IdleDisplay(lambda:engine_call('prepare'),remove,timeout_seconds=settings.display_idle_timeout_seconds,
+                        timeout_provider=lambda:read_settings().display_idle_timeout_seconds)
     # A runner restart must not lose cleanup of an already connected reservation.
-    if context.get('connected') is True:display.deadline=time.monotonic()+20
+    if context.get('connected') is True:display.schedule_cleanup()
     token=secrets.token_hex(32);control_path=settings.directory/'runtime/boot-control.sock'
     def request(message):
         if message.get('operation')=='prepare':engine_call('check')
@@ -114,8 +115,9 @@ def boot_main():
                 if not host.step(phase,None,time.monotonic()):break
                 if owner.process is not previous:
                     previous=owner.process;listener=ListenerEvidence()
-                health=dict(listening=bool(owner.running and listener.read(log)),
-                            capture_ready=bool(owner.running and display.frames_ready))
+                listening=bool(owner.running and listener.read(log))
+                host.observe_listener(listening,time.monotonic())
+                health=display.health(listening=listening,startup_error=host.startup_error)
                 if health['capture_ready']:host.healthy()
                 write_health(settings.directory/'runtime/boot-health.json',dict(health,pid=os.getpid(),
                     boot_id=boot_id,time=time.monotonic(),session=context['session'],state=display.state))
@@ -185,12 +187,14 @@ def desktop_main():
     from .control import ControlServer
     from .dbus_service import NAME,PATH,INTERFACE
     lock=threading.RLock()
-    def engine_call(operation):
+    def engine_call(operation,mode=None):
         import dbus
         from dbus.mainloop import NULL_MAIN_LOOP
         bus=dbus.SystemBus(private=True,mainloop=NULL_MAIN_LOOP)
         try:
             interface=dbus.Interface(bus.get_object(NAME,PATH,introspect=False),INTERFACE)
+            if mode is not None:
+                return json.loads(interface.EngineDisplayMode(descriptor['generation'],operation,*mode,True,timeout=18))
             return json.loads(interface.EngineDisplay(descriptor['generation'],operation,timeout=18))
         finally:bus.close()
     def remove():
@@ -198,14 +202,21 @@ def desktop_main():
         # The coordinator independently checks identity release before unplugging.
         owner.stop()
         engine_call('idle')
-    display=IdleDisplay(lambda:engine_call('prepare'),remove)
+    display=IdleDisplay(lambda:engine_call('prepare'),remove,timeout_seconds=settings.display_idle_timeout_seconds,
+                        timeout_provider=lambda:read_settings().display_idle_timeout_seconds,
+                        prepare_mode=lambda mode:engine_call('prepare',mode))
     # A carried boot output can be idle even before the first desktop stream.
-    display.deadline=time.monotonic()+20
+    display.schedule_cleanup()
     listener=ListenerEvidence()
     startup_error='';startup_deadline=None
     token=secrets.token_hex(32)
     control_path=settings.directory/'runtime/control.sock'
-    server=ControlServer(control_path,token,lambda:owner.process,display.request,lock)
+    def request(message):
+        if message.get('operation')=='prepare' and not descriptor.get('client_display_mode',False):
+            mode=descriptor.get('display_mode',[1920,1080,60])
+            message=dict(message,width=mode[0],height=mode[1],fps=mode[2])
+        return display.request(message)
+    server=ControlServer(control_path,token,lambda:owner.process,request,lock)
     environment.update(MONITORIZE_CONTROL_SOCKET=str(control_path),MONITORIZE_CONTROL_TOKEN=token,
                        MONITORIZE_CONTROL_INSTANCE='1')
     try:
@@ -231,8 +242,7 @@ def desktop_main():
                         retry.failed(time.monotonic())
                         startup_error='Sunshine startup failed: '+type(error).__name__+': '+str(error)[:256]
                         print(startup_error,flush=True)
-                health=dict(listening=bool(owner.running and listener.read(log)),
-                            capture_ready=bool(owner.running and display.frames_ready))
+                health=display.health(listening=bool(owner.running and listener.read(log)))
                 if health['listening']:
                     startup_error='';startup_deadline=None
                 elif owner.running and startup_deadline is not None and time.monotonic()>=startup_deadline:
@@ -241,7 +251,7 @@ def desktop_main():
                     startup_deadline=None
                     print(startup_error,flush=True)
                 if health['capture_ready']:retry.healthy()
-                health['startup_error']=startup_error
+                health['startup_error']=startup_error or display.error or display.configuration_error
                 if startup_error:health['retry_seconds']=max(0,int((retry.deadline or time.monotonic())-time.monotonic()))
                 write_health(settings.directory/'runtime/desktop-health.json',dict(health,pid=os.getpid(),
                     boot_id=boot_id,time=time.monotonic(),session=descriptor['session'],state=display.state))

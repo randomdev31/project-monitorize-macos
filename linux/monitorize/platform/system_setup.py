@@ -112,7 +112,7 @@ def remote_login_setup_status():
     from monitorize.remote_login.display_managers import manager_capabilities
     capability=manager_capabilities()
     result={'available':HELPER.is_file() and entry.is_file(),'enabled':False,
-            'supported':capability['supported'],'manager':capability['manager'],
+            'login_primary_display':False,'display_idle_timeout_seconds':20,'supported':capability['supported'],'manager':capability['manager'],
             'compositor':capability['compositor'],'validated':capability['validated'],
             'message':capability['message']}
     if capability['manager'] in ('sddm.service','gdm.service'):
@@ -127,6 +127,8 @@ def remote_login_setup_status():
                 result.update(available=False,message='Remote login belongs to another local account.')
             else:
                 result['enabled']=settings.enabled
+                result['login_primary_display']=getattr(settings,'login_primary_display',False)
+                result['display_idle_timeout_seconds']=getattr(settings,'display_idle_timeout_seconds',20)
                 if getattr(settings,'manager','plasmalogin.service')!=capability['manager']:
                     result.update(supported=False,message='Display manager changed after enrollment. Revalidate remote-login setup.')
         except ValueError:result.update(available=False,message='Remote-login configuration needs administrator repair.')
@@ -161,3 +163,46 @@ def prepare_desktop_fallback():
         result=subprocess.run([pkexec,str(HELPER),'--remote-login','fallback'],capture_output=True,text=True,timeout=90,check=False)
         return parse_system_setup_result(result.returncode,result.stdout,result.stderr)
     except (OSError,subprocess.TimeoutExpired):return {'success':False,'message':'Desktop fallback authorization or ownership release failed; inspect the remote-login journal.'}
+
+
+def apply_login_primary_display(enabled):
+    """Save an enrolled account's boot-only display preference through Polkit."""
+    if type(enabled) is not bool:return {'success':False,'message':'Invalid login-screen display preference.'}
+    status=remote_login_setup_status()
+    if not status.get('available') or not status.get('enabled'):
+        return {'success':False,'message':'Enable Start at boot before changing login-screen capture.'}
+    if enabled and status.get('manager')!='gdm.service':
+        return {'success':False,'message':'Primary login-screen display capture currently requires GNOME with GDM.'}
+    installed=Path('/usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py')
+    try:current='LOGIN_PRIMARY_DISPLAY_PROTOCOL = 1' in installed.read_text()
+    except OSError:current=False
+    if not current:return {'success':False,'message':'Install the login-screen primary display service update before changing this option.'}
+    pkexec=shutil.which('pkexec')
+    if not pkexec:return {'success':False,'message':'Login-screen settings need administrator authorization through Polkit.'}
+    try:
+        result=subprocess.run([pkexec,str(HELPER),'--remote-login','primary-on' if enabled else 'primary-off'],
+            capture_output=True,text=True,timeout=120,check=False)
+        return parse_system_setup_result(result.returncode,result.stdout,result.stderr)
+    except (OSError,subprocess.TimeoutExpired):
+        return {'success':False,'message':'Login-screen settings authorization failed or timed out. Check the saved option before retrying.'}
+
+
+def apply_display_idle_timeout(seconds):
+    from monitorize.remote_login.settings import validate_idle_timeout
+    try:validate_idle_timeout(seconds)
+    except ValueError as error:return {'success':False,'message':str(error)}
+    status=remote_login_setup_status()
+    if not status.get('available') or not status.get('enabled'):
+        return {'success':False,'message':'Enable Start at boot before changing the display timeout.'}
+    installed=Path('/usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py')
+    try:current='DISPLAY_IDLE_TIMEOUT_PROTOCOL = 1' in installed.read_text()
+    except OSError:current=False
+    if not current:return {'success':False,'message':'Install the display timeout service update before changing this option.'}
+    pkexec=shutil.which('pkexec')
+    if not pkexec:return {'success':False,'message':'Display timeout settings need administrator authorization through Polkit.'}
+    try:
+        result=subprocess.run([pkexec,str(HELPER),'--remote-login','timeout','--display-idle-timeout',str(seconds)],
+                              capture_output=True,text=True,timeout=60,check=False)
+        return parse_system_setup_result(result.returncode,result.stdout,result.stderr)
+    except (OSError,subprocess.TimeoutExpired):
+        return {'success':False,'message':'Display timeout authorization failed or timed out. Refresh Settings before retrying.'}

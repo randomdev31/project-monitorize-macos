@@ -54,6 +54,14 @@ class VkmsDbusTest(unittest.TestCase):
             self.client.get_authorization_state()
         self.assertNotIn('Install', str(error.exception))
 
+    def test_missing_authorization_method_is_upgrade_error_not_denial(self):
+        error=RuntimeError('Unknown method: GetAuthorizationState is not a valid method')
+        error.get_dbus_name=lambda:'org.freedesktop.DBus.Error.UnknownMethod'
+        self.service.GetAuthorizationState.side_effect=error
+        with self.assertRaises(VkmsProtocolError) as caught:self.client.get_authorization_state()
+        self.assertIn('Update',str(caught.exception))
+        self.assertNotIn('denied',str(caught.exception))
+
     def test_unattended_create_uses_only_silent_method(self):
         self.service.CreateDisplayUnattended.return_value = json.dumps(self.created)
         self.client.create_display(1920, 1080, 60, display='mon2', unattended=True)

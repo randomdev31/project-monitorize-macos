@@ -167,7 +167,7 @@ class UiAsyncTest(unittest.TestCase):
             backend._finish_desktop_fallback(dict(success=True,generation=1,action='start'))
             start.assert_not_called()
 
-    def test_remote_save_later_rejects_unsupported_display_modes(self):
+    def test_remote_save_later_keeps_display_intent_without_applying_reserved_runtime(self):
         backend=self.make_backend();backend._remote_login.enabled=True
         backend._remote_login.status={'desktop_options_version':1}
         baseline=backend.configuration_state.applied
@@ -177,8 +177,10 @@ class UiAsyncTest(unittest.TestCase):
         backend.configuration_state.update('primary',{'display_type':'Mirror','mirror_output':'eDP-1'})
         result=[];backend.configurationApplyFinished.connect(lambda *args:result.append(args))
         with patch('monitorize.desktop.configuration_state.save_bundle') as save:
-            backend.saveConfigurationForLater();save.assert_not_called()
-        self.assertIn('reserved VKMS display',result[-1][1])
+            backend.saveConfigurationForLater();save.assert_called_once()
+        self.assertTrue(result[-1][0])
+        self.assertEqual(backend.configuration_state.saved['primary']['display_type'],'Mirror')
+        self.assertEqual(backend.configuration_state.applied['primary']['display_type'],'Extend')
 
     def test_remote_layout_behavior_is_accepted_for_desktop(self):
         backend=self.make_backend();backend._remote_login.enabled=True
@@ -248,6 +250,18 @@ class UiAsyncTest(unittest.TestCase):
             self.wait_for(backend.vkmsHelperAvailabilityChanged)
         self.assertTrue(backend.vkmsHelperAvailable)
         backend.streaming.start.assert_not_called()
+
+    def test_missing_vkms_authorization_api_is_reported_as_host_update(self):
+        from monitorize.platform.monitorize_vkms_dbus import VkmsProtocolError
+        backend=self.make_backend();results=[]
+        backend.vkmsAuthorizationReady.connect(results.append)
+        with patch('monitorize.desktop.backend.MonitorizeVkmsClient') as client:
+            client.return_value.get_authorization_state.side_effect=VkmsProtocolError('Update host service')
+            backend.refreshVkmsAuthorization()
+            self.wait_for(backend.vkmsAuthorizationReady)
+        self.assertTrue(results[-1]['host_update_required'])
+        self.assertFalse(results[-1]['success'])
+        client.return_value.get_authorization_state.assert_called_once()
 
     def test_window_visibility_before_backend_initialization(self):
         window = Mock(spec=["isVisible", "isMinimized"])

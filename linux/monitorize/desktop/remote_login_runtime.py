@@ -10,7 +10,7 @@ from monitorize.remote_login.dbus_service import NAME,PATH,INTERFACE
 MESSAGES={
     'greeter_idle':'Login host is listening; the virtual display is disconnected until a client connects.',
     'greeter_preparing':'Preparing the login-screen display.',
-    'greeter_disconnect_grace':'Client disconnected; removing the login-screen display after 20 seconds.',
+    'greeter_disconnect_grace':'Client disconnected; removing the login-screen display after {timeout} seconds.',
     'waiting_for_greeter':'Waiting for the login screen.',
     'greeter_listening':'Session is starting.',
     'login_available':'Login screen available.',
@@ -18,9 +18,10 @@ MESSAGES={
     'waiting_for_desktop':'Session is starting.',
     'desktop_listening':'Waiting for a client.',
     'streaming':'Client connected.',
-    'disconnect_grace':'Client disconnected; removing the display after 20 seconds.',
+    'disconnect_grace':'Client disconnected; removing the display after {timeout} seconds.',
     'removing':'Releasing capture and removing the virtual display.',
     'desktop_starting':'Session is starting.',
+    'authentication_error':'Monitorize could not authenticate this application as part of your active desktop session. Close it and launch the desktop controller service.',
     'ownership_wait':'Waiting to reclaim desktop streaming ownership.',
     'desktop_available':'Client connected.',
     'stopped':'Session is not running.',
@@ -132,9 +133,16 @@ class Participant:
                     if not grant.get('granted'):return dict(status,state=grant.get('state',status['state']))
                     self.generation=grant['generation']
                 if status.get('state') in ('waiting_for_desktop','handoff_to_desktop'):
-                    output=self.output_finder() or status.get('output_name')
+                    output=status.get('output_name') or self.output_finder()
                     if output is None:return dict(state='waiting_for_desktop',capture_ready=False)
                     descriptor={'capture':'kms','output_name':output}
+                    if self.factory is None:
+                        from monitorize.config.settings import load_display_settings
+                        from monitorize.desktop.session import Session
+                        saved=load_display_settings();config=Session._saved_values(saved)
+                        width,height=map(int,config['res'].split('x'))
+                        descriptor.update(client_display_mode=bool(saved.get('use_client_display_settings',False)),
+                                          display_mode=[width,height,float(config['fps'])])
                     if self.stream_options is None and status.get('desktop_options_version',0)>=1:
                         self.stream_options=saved_stream_options()
                     if status.get('desktop_options_version',0)>=1:
@@ -147,6 +155,10 @@ class Participant:
             # Revoked ownership is not a missing service. Keep the same sender,
             # discard only the stale token, and observe status on the next poll.
             name=error.get_dbus_name() if hasattr(error,'get_dbus_name') else ''
+            if name==NAME+'.AuthenticationFailed':
+                self.generation=''
+                return dict(status,state='authentication_error',capture_ready=False,listening=False,
+                            control_error=MESSAGES['authentication_error'])
             if name==NAME+'.Rejected' or isinstance(error,PermissionError):
                 self.generation=''
                 return dict(status,state='ownership_wait',capture_ready=False,listening=False)
@@ -179,7 +191,13 @@ class Participant:
         if options is not None:self.stream_options=dict(options)
         try:
             self._call('Start');self.want_running=True
-        except Exception:return dict(state='unavailable',capture_ready=False)
+        except Exception as error:
+            name=error.get_dbus_name() if hasattr(error,'get_dbus_name') else ''
+            if name==NAME+'.AuthenticationFailed':
+                self.generation=''
+                return dict(state='authentication_error',capture_ready=False,listening=False,
+                            control_error=MESSAGES['authentication_error'])
+            return dict(state='unavailable',capture_ready=False)
         return self.poll()
 
     def close(self):
@@ -213,10 +231,10 @@ class RemoteLoginRuntime(QObject):
     @property
     def active(self):
         # Enrollment is not proof that a streaming service is running.
-        return self.enabled and self.status.get('state') not in ('stopped','disabled','unavailable','error')
+        return self.enabled and self.status.get('state') not in ('stopped','disabled','unavailable','error','authentication_error')
     @property
     def message(self):
-        return self.status.get('layout_error') or self.status.get('startup_error') or self.status.get('control_error') or MESSAGES.get(self.status.get('state'),'Waiting for remote-login ownership.')
+        return self.status.get('layout_error') or self.status.get('startup_error') or self.status.get('control_error') or MESSAGES.get(self.status.get('state'),'Waiting for remote-login ownership.').format(timeout=self.status.get('display_idle_timeout_seconds',20))
 
     def _submit(self,method):
         if self.closed or self.busy or not self.enabled:return

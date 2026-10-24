@@ -44,7 +44,7 @@ def build_service(settings,bus):
         return lease.get('connector') or find_boot_output(require_enabled=False) or ('Virtual-0' if lease.get('protected') is True else None)
     # Publish listener identity without enabling capture. EnginePrepare activates
     # the output only for an authenticated launch, including after idle unplug.
-    store=DescriptorStore(settings,reserved_output,lambda uid,session:{'connector':reserved_output()},session_environment=helper._active_session)
+    store=DescriptorStore(settings,reserved_output,lambda uid,session:desktop_operation_installed(uid,session,'adopt'),session_environment=helper._active_session)
     def health(phase):
         from .health import read_health
         try:
@@ -81,6 +81,10 @@ def build_service(settings,bus):
         journal=StopJournal(settings.uid,Path("/proc/sys/kernel/random/boot_id").read_text().strip()))
     service.model.enabled=settings.enabled
     service.output_name=reserved_output
+    def display_timeout():
+        try:return read_settings().display_idle_timeout_seconds
+        except ValueError:return settings.display_idle_timeout_seconds
+    service.display_timeout=display_timeout
     def owner_check(session,generation):
         with service._lock:
             return (service.model.enabled and service.owner is not None and service.owner_session==session
@@ -95,12 +99,13 @@ def build_service(settings,bus):
     def boot_gate(sender,transport,*,idle=False,initial=False):
         from .engine_gate import EngineGate
         from .greeter_display import greeter_context
-        context=greeter_context(transport)
+        isolate_uid=getattr(settings,'manager','plasmalogin.service')=='gdm.service'
+        context=greeter_context(transport,isolate_uid=isolate_uid)
         generation=service.epoch if initial else getattr(service,'boot_generation','')
         if not initial and context!=getattr(service,'boot_owner_context',None):
             raise PermissionError('The boot runner belongs to an earlier greeter.')
         def current(uid,session):
-            return greeter_context(transport)==context
+            return greeter_context(transport,isolate_uid=isolate_uid)==context
         gate=EngineGate(settings.uid,transport,
             lambda:dict(uid=settings.uid,session=context['session'],generation=generation),
             lambda session,token:(service.model.enabled and token==generation and
@@ -126,23 +131,28 @@ def build_service(settings,bus):
         try:
             gate,context=boot_gate(sender,transport,idle=operation=='idle')
             if operation=='check':return dict(valid=True)
-            session,environment=helper._active_session(context['greeter_uid'])
-            from .wayland_greeter import greeter_compositor
-            greeter_compositor(settings,context,session,environment,helper)
             def check():gate.check(sender,service.boot_generation,idle=operation=='idle')
-            def activate(output,remaining):
-                # Resolve environment exclusively from the verified greeter UID.
-                session,environment=helper._active_session(context['greeter_uid'])
-                if session!=context['session']:raise PermissionError('Greeter session changed.')
-                from .wayland_greeter import activate_greeter
-                return activate_greeter(settings,context,session,environment,output,remaining,helper,check)
-            result=greeter_operation_installed(operation,context_check=check,activate=activate)
-            check()
-            return dict(output_name=result.get('connector') or '',capture='kms',width=1920,height=1080,fps=60)
+            def virtual():
+                from .wayland_greeter import greeter_compositor,greeter_environment
+                session,environment=greeter_environment(settings,context,helper)
+                greeter_compositor(settings,context,session,environment,helper)
+                def activate(output,remaining):
+                    # Resolve environment exclusively from the verified greeter UID.
+                    session,environment=greeter_environment(settings,context,helper)
+                    if session!=context['session']:raise PermissionError('Greeter session changed.')
+                    from .wayland_greeter import activate_greeter
+                    return activate_greeter(settings,context,session,environment,output,remaining,helper,check)
+                result=greeter_operation_installed(operation,context_check=check,activate=activate)
+                check()
+                return dict(output_name=result.get('connector') or '',capture='kms',width=1920,height=1080,fps=60)
+            from .wayland_greeter import capture_operation
+            return capture_operation(settings,context,operation,helper,check,virtual)
         finally:connection.close()
-    def engine_display(sender,generation,operation):
+    def engine_display(sender,generation,operation,mode=None,capture_idle=False):
         if operation not in ('prepare','idle','check'):raise ValueError('Unknown display operation.')
-        if generation and generation==getattr(service,'boot_generation',None):return greeter_display(sender,operation)
+        if generation and generation==getattr(service,'boot_generation',None):
+            if mode is not None:raise PermissionError('Client mode requests are desktop-only.')
+            return greeter_display(sender,operation)
         if operation=='check':raise PermissionError('Invalid boot ownership token.')
         from .engine_gate import EngineGate
         from .policy import session_target
@@ -153,9 +163,17 @@ def build_service(settings,bus):
             gate=EngineGate(settings.uid,transport,
                 lambda:read_descriptor(settings.runtime/'desktop.json',settings.uid),owner_check,free,session_check=selected)
             descriptor=gate.check(sender,generation,idle=operation=='idle')
-            result=desktop_operation_installed(settings.uid,descriptor['session'],operation,engines_stopped=operation=='idle')
+            options={}
+            if mode is not None:
+                from .settings import validate_display_mode
+                if operation!='prepare':raise ValueError('Mode requests require desktop prepare.')
+                requested=validate_display_mode(mode)
+                mode=requested if descriptor.get('client_display_mode') else descriptor.get('display_mode',[1920,1080,60])
+                options=dict(mode=validate_display_mode(mode),capture_idle=capture_idle)
+            result=desktop_operation_installed(settings.uid,descriptor['session'],operation,engines_stopped=operation=='idle',**options)
             gate.check(sender,generation,idle=operation=='idle')
-            return dict(output_name=result.get('connector') or reserved_output(),capture='kms',width=1920,height=1080,fps=60)
+            actual=result.get('mode',[1920,1080,60])
+            return dict(output_name=result.get('connector') or reserved_output(),capture='kms',width=actual[0],height=actual[1],fps=actual[2])
         finally:connection.close()
     service.engine_display=engine_display
     def remove_display(sender):

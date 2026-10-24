@@ -13,6 +13,7 @@ class BootHost:
         self.config=config;self.assets=assets;self.retry=RetrySchedule()
         self.closed=False;self.output=None;self.state='waiting_for_greeter'
         self.started=False;self.prepare=prepare;self.control_environment=None
+        self.startup_error='';self.startup_deadline=None
 
     def step(self,phase,output,now):
         if self.closed:return False
@@ -27,6 +28,8 @@ class BootHost:
         code=self.engine.reap()
         if code is not None:
             self.retry.failed(now);self.state='retry_wait';self.output=None
+            self.startup_error=f'Boot Sunshine exited (status {code}). Inspect the boot engine journal and boot.log.'
+            self.startup_deadline=None
         if phase!='greeter' or output is None:
             if self.engine.running:self.engine.stop()
             self.state='waiting_for_greeter';return True
@@ -50,15 +53,27 @@ class BootHost:
         try:
             if self.prepare is None:self.engine.start(argv,environment)
             else:self.engine.start(argv,environment,prepare=self.prepare)
-        except (OSError,ValueError,RuntimeError):
+        except (OSError,ValueError,RuntimeError) as error:
+            self.startup_error='Boot Sunshine startup failed: '+type(error).__name__+'. Inspect the boot engine journal.'
+            print(self.startup_error,flush=True)
             self.retry.failed(now);self.state='start_failed';return True
         self.output=output;self.started=True;self.state='engine_running'
+        self.startup_deadline=now+45
         # Retry attempts reset only after an explicit, sustained health result,
         # not merely Popen success; repeated startup exits therefore back off.
         return True
 
     def healthy(self):
         if self.engine.running:self.retry.healthy()
+
+    def observe_listener(self,listening,now):
+        if listening:
+            self.startup_error='';self.startup_deadline=None
+        elif self.engine.running and self.startup_deadline is not None and now>=self.startup_deadline:
+            self.engine.stop();self.retry.failed(now);self.output=None
+            self.startup_error='Boot Sunshine did not start listening within 45 seconds. Inspect the boot engine journal and boot.log.'
+            self.startup_deadline=None;self.state='retry_wait'
+            print(self.startup_error,flush=True)
 
     def close(self):
         self.retry.cancel();self.engine.stop();self.closed=True;self.state='stopped'

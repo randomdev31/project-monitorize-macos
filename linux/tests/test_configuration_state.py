@@ -53,6 +53,40 @@ class ConfigurationStateTest(unittest.TestCase):
         candidate=self.model.candidate();candidate['primary']['resolution']='800x600'
         self.assertNotEqual(candidate,self.model.draft)
 
+    def test_native_gnome_extend_rejects_kms_before_starting(self):
+        self.model.update('primary', {'sunshine_capture':'kms','virtual_display_creator':'native'})
+        with self.assertRaisesRegex(ValueError, 'KMS.*VKMS'):
+            self.model.candidate(desktop='gnome')
+
+    def test_kms_is_valid_for_reserved_remote_output_and_mirror(self):
+        self.model.update('primary', {'sunshine_capture':'kms','virtual_display_creator':'native'})
+        self.model.candidate(desktop='gnome', remote_login=True)
+        self.model.update('primary', {'display_type':'Mirror','mirror_output':'DP-1'})
+        self.model.candidate(desktop='gnome')
+
+    def test_second_native_gnome_display_rejects_kms(self):
+        self.model.update('second', {'enabled':True,'sunshine_capture':'kms','virtual_display_creator':'native'})
+        with self.assertRaisesRegex(ValueError, 'Display 2'):
+            self.model.candidate(desktop='gnome')
+
+    def test_leaving_remote_login_reconciles_capture_without_losing_draft_edits(self):
+        self.model.update('primary', {'sunshine_capture':'kms','virtual_display_creator':'native'})
+        self.model.accept(self.model.candidate(remote_login=True))
+        self.model.update('primary', {'resolution':'2560x1440','sunshine_codec':'HEVC'})
+        self.model.reconcile_desktop_capture('gnome')
+        self.assertEqual(self.model.saved['primary']['sunshine_capture'],'auto')
+        self.assertEqual(self.model.draft['primary']['sunshine_capture'],'auto')
+        self.assertEqual(self.model.draft['primary']['resolution'],'2560x1440')
+        self.assertEqual(self.model.draft['primary']['sunshine_codec'],'HEVC')
+        self.assertTrue(self.model.dirty)
+
+    def test_leaving_remote_login_preserves_vkms_and_mirror_kms(self):
+        for values in ({'virtual_display_creator':'vkms'}, {'display_type':'Mirror','mirror_output':'DP-1'}):
+            self.model.update('primary', dict(values,sunshine_capture='kms'))
+            self.model.accept(self.model.candidate())
+            self.model.reconcile_desktop_capture('gnome')
+            self.assertEqual(self.model.saved['primary']['sunshine_capture'],'kms')
+
     def test_saved_later_is_distinct_from_running_configuration(self):
         old=self.model.applied['primary']['resolution']
         self.model.update('primary',{'resolution':'2560x1440'})

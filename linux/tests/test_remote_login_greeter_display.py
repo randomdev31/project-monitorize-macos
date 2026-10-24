@@ -17,3 +17,16 @@ class GreeterContextTests(unittest.TestCase):
         for changed in ({'Active':False},{'Remote':True},{'Type':'tty'}):
             bus=Bus();base=bus.properties();bus.properties=lambda *args:dict(base,**changed)
             with self.assertRaises(PermissionError):greeter_context(bus)
+
+    def test_isolated_gdm_uid_rejects_another_seat_or_overlapping_greeter(self):
+        for seat in ('seat1','seat0'):
+            bus=Bus();base=bus.properties()
+            bus.call=lambda *args:[('g1',42,'greeter','seat0','/greeter'),('g2',42,'greeter',seat,'/other')]
+            bus.properties=lambda path,*args:dict(base,Id='g2',Seat=(seat,'/seat')) if path=='/other' else base
+            with self.assertRaises(PermissionError):greeter_context(bus,isolate_uid=True)
+
+    def test_isolated_gdm_uid_allows_its_non_graphical_user_manager(self):
+        bus=Bus();base=bus.properties()
+        bus.call=lambda *args:[('g1',42,'greeter','seat0','/greeter'),('m1',42,'greeter','','/manager')]
+        bus.properties=lambda path,*args:dict(base,Id='m1',Class='manager-early',Type='unspecified',Seat=('','/')) if path=='/manager' else base
+        self.assertEqual(greeter_context(bus,isolate_uid=True),dict(session='g1',greeter_uid=42))

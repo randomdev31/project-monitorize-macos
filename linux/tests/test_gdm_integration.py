@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
+import socket
 from unittest.mock import Mock,patch
 from monitorize.remote_login.display_managers import manager_capabilities
 from monitorize.remote_login.gdm_context import verify
@@ -10,6 +11,16 @@ from monitorize.remote_login.session_context import desktop_context
 
 
 class GdmTests(unittest.TestCase):
+    def test_socket_peer_is_verified_without_session_scope_membership(self):
+        from monitorize.remote_login.gdm_context import socket_owner
+        with tempfile.TemporaryDirectory() as directory, socket.socket(socket.AF_UNIX) as server:
+            root=Path(directory);path=root/'wayland-0'
+            server.bind(str(path));server.listen(4)
+            self.assertEqual(socket_owner(path,os.getuid(),root),os.getpid())
+            with self.assertRaises(PermissionError):socket_owner(path,os.getuid()+1,root)
+            alias=root/'wayland-1';alias.symlink_to(path)
+            with self.assertRaises(PermissionError):socket_owner(alias,os.getuid(),root)
+            with self.assertRaises(PermissionError):socket_owner(path,os.getuid(),root/'other')
     def test_distro_aliases_normalize_without_claiming_validation(self):
         for name in ('gdm.service','gdm3.service'):
             with tempfile.TemporaryDirectory() as directory:
@@ -23,16 +34,21 @@ class GdmTests(unittest.TestCase):
         self.assertEqual(desktop_context({'XDG_SESSION_TYPE':'wayland','XDG_CURRENT_DESKTOP':'ubuntu:GNOME'}),{'desktop':'GNOME'})
         with self.assertRaises(ValueError):desktop_context({'XDG_SESSION_TYPE':'x11','XDG_CURRENT_DESKTOP':'GNOME'})
 
-    def authenticate(self,*,cmd=b'gnome-shell\0--mode=gdm\0',owner=123,replacement=123):
+    def authenticate(self,*,cmd=b'gnome-shell\0--mode=gdm\0',owner=123,replacement=123,owner_after=None,peers=None,paths=('wayland-0',),process_uid=991):
         helper=Mock();helper._validate_session_socket.side_effect=[123,replacement]
-        helper._session_connection_environment.return_value={'WAYLAND_DISPLAY':'wayland-0'}
+        # GDM's shell runs in a user service outside session-c1.scope, with no
+        # inherited session ID. Generic session-scoped lookup cannot find it.
+        helper._session_connection_environment.side_effect=RuntimeError('No session-scoped socket')
         environment={'XDG_SESSION_TYPE':'wayland','DBUS_SESSION_BUS_ADDRESS':'unix:path=/wrong'}
         with patch('monitorize.remote_login.gdm_context.trusted_shell'), \
              patch('monitorize.remote_login.gdm_context.Path.read_bytes',return_value=cmd), \
-             patch('monitorize.remote_login.gdm_context.Path.lstat',return_value=SimpleNamespace(st_mode=0o140600,st_uid=991)), \
+             patch('monitorize.remote_login.gdm_context.Path.lstat',side_effect=lambda path:SimpleNamespace(st_mode=0o40700 if str(path)=='/run/user/991' else 0o140600,st_uid=991),autospec=True), \
+             patch('monitorize.remote_login.gdm_context.Path.stat',return_value=SimpleNamespace(st_uid=process_uid)), \
+             patch('monitorize.remote_login.gdm_context.Path.glob',return_value=[Path('/run/user/991')/name for name in paths]), \
+             patch('monitorize.remote_login.gdm_context.socket_owner',side_effect=peers or [123,replacement]), \
              patch('monitorize.remote_login.gdm_context.pwd.getpwuid',return_value=SimpleNamespace(pw_name='gdm-test',pw_gid=991,pw_dir='/var/lib/gdm')), \
              patch('monitorize.remote_login.gdm_context.os.getgrouplist',return_value=[991]), \
-             patch('monitorize.remote_login.gdm_context.subprocess.run',return_value=SimpleNamespace(stdout=str(owner))) as run:
+             patch('monitorize.remote_login.gdm_context.subprocess.run',side_effect=[SimpleNamespace(stdout=str(owner)),SimpleNamespace(stdout=str(owner if owner_after is None else owner_after))]) as run:
             result=verify({'session':'c1','greeter_uid':991},'c1',environment,helper)
             self.assertEqual(run.call_args.kwargs['user'],991)
             self.assertEqual(run.call_args.kwargs['env']['DBUS_SESSION_BUS_ADDRESS'],'unix:path=/run/user/991/bus')
@@ -45,6 +61,15 @@ class GdmTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError,'DisplayConfig'):self.authenticate(owner=456)
     def test_compositor_replacement_rejected(self):
         with self.assertRaisesRegex(PermissionError,'changed'):self.authenticate(replacement=456)
+    def test_displayconfig_owner_replacement_is_rejected(self):
+        with self.assertRaisesRegex(PermissionError,'DisplayConfig'):self.authenticate(owner_after=456)
+    def test_ambiguous_authenticated_sockets_are_rejected(self):
+        with self.assertRaisesRegex(PermissionError,'found 2'):self.authenticate(paths=('wayland-0','wayland-1'),peers=[123,123])
+    def test_other_socket_peers_are_ignored(self):
+        result=self.authenticate(paths=('wayland-0','wayland-1'),peers=[456,123,123])
+        self.assertEqual(result['WAYLAND_DISPLAY'],'wayland-1')
+    def test_displayconfig_process_must_belong_to_greeter_uid(self):
+        with self.assertRaisesRegex(PermissionError,'another account'):self.authenticate(process_uid=992)
     def test_session_change_rejected_before_probe(self):
         helper=Mock()
         with self.assertRaises(PermissionError):verify({'session':'c1','greeter_uid':991},'c2',{},helper)
@@ -81,6 +106,15 @@ class ProbeTests(unittest.TestCase):
 
 
 class ActivationTests(unittest.TestCase):
+    def test_gdm_environment_does_not_use_session_scoped_socket_discovery(self):
+        from monitorize.remote_login.wayland_greeter import greeter_environment
+        helper=Mock();helper._active_session.side_effect=RuntimeError('GDM shell is a user service')
+        with patch('monitorize.remote_login.wayland_greeter.require_manager',return_value={'manager':'gdm.service','compositor':'gnome'}):
+            session,environment=greeter_environment(SimpleNamespace(manager='gdm.service'),{'session':'c1','greeter_uid':991},helper)
+        self.assertEqual(session,'c1')
+        self.assertEqual(environment['XDG_SESSION_TYPE'],'wayland')
+        helper._active_session.assert_not_called()
+
     def test_gdm_activation_uses_verified_greeter_environment(self):
         from monitorize.remote_login.wayland_greeter import activate_greeter
         helper=Mock();check=Mock()

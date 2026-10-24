@@ -51,6 +51,26 @@ class BootHostTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.host.step('greeter',output,0)
         self.engine.start.assert_not_called()
 
+    def test_start_failure_is_exposed_without_private_exception_text(self):
+        self.engine.start.side_effect=OSError('private-token-fixture')
+        self.host.step('greeter','Virtual-4',0)
+        self.assertIn('OSError',self.host.startup_error)
+        self.assertNotIn('private-token-fixture',self.host.startup_error)
+
+    def test_listener_timeout_stops_and_retries_instead_of_waiting_forever(self):
+        self.host.step('greeter','Virtual-4',0);self.engine.running=True
+        self.host.observe_listener(False,46)
+        self.engine.stop.assert_called_once()
+        self.assertIn('45 seconds',self.host.startup_error)
+        self.assertEqual(self.host.state,'retry_wait')
+
+    def test_listener_recovery_clears_startup_failure(self):
+        self.engine.reap.return_value=1
+        self.host.step('greeter','Virtual-4',0)
+        self.assertIn('status 1',self.host.startup_error)
+        self.host.observe_listener(True,2)
+        self.assertEqual(self.host.startup_error,'')
+
     def test_stop_cancels_retries(self):
         self.host.close();self.assertFalse(self.host.step('greeter','Virtual-4',100))
         self.engine.start.assert_not_called()

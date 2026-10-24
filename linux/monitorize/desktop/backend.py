@@ -201,7 +201,13 @@ class MonitorizeBackend(QObject):
         effective_general = dict(general, streaming_backend="sunshine" if self._remote_login.enabled else self._streaming_backend)
         self._streaming_backend = effective_general["streaming_backend"]
         self.streaming.streaming_backend = self._streaming_backend
-        self.configuration_state = ConfigurationState(load_display_settings(), load_second_display_settings(), effective_general)
+        primary=load_display_settings()
+        # The reserved remote output always uses KMS. Desktop capture preferences
+        # (including Auto after fallback) do not change that service contract.
+        if self._remote_login.enabled:primary['sunshine_capture']='kms'
+        self.configuration_state = ConfigurationState(primary, load_second_display_settings(), effective_general)
+        # Persisted intent is not evidence that a stream has ever started.
+        self._verified_configuration = None
         self.session.runtime_configuration = copy.deepcopy(self.configuration_state.applied)
         self._restart = RestartTransaction(self._stop_owned_session, self._owned_session_stopped,
             self._launch_configuration, self._configuration_ready, self._configuration_failure,
@@ -354,11 +360,6 @@ class MonitorizeBackend(QObject):
             return
         if self._remote_setup_busy or self._closing:
             return
-        if enabled and str(load_display_settings().get('sunshine_capture','auto')).strip().lower() != 'kms':
-            message='Set the capture method to KMS in Sunshine settings before enabling Start at boot.'
-            self.remoteLoginSetupFinished.emit({'success':False,'message':message})
-            self.remoteLoginSetupBlocked.emit(message)
-            return
         if self.session.active or self.session.busy or (getattr(self, "_remote_login", None) is not None and self._remote_login.status.get("capture_ready")):
             self.remoteLoginSetupFinished.emit({"success": False, "message": "Stop the current stream before configuring remote login."})
             return
@@ -380,19 +381,83 @@ class MonitorizeBackend(QObject):
             self._remoteLoginSetupWorkerFinished.emit(result)
         self._background_executor.submit(work)
 
+    @pyqtSlot(bool)
+    def configureLoginPrimaryDisplay(self, enabled):
+        if self.applyingConfiguration:
+            self.remoteLoginSetupFinished.emit({"success":False,"message":"Wait for Apply or Restart to finish before changing login-screen settings."})
+            return
+        if self._remote_setup_busy or self._closing:return
+        self._remote_setup_busy=True
+        self.remoteLoginSetupChanged.emit()
+        def work():
+            from monitorize.platform.system_setup import apply_login_primary_display
+            try:result=apply_login_primary_display(enabled)
+            except Exception:result={"success":False,"message":"Login-screen settings could not be saved. Check the saved option before retrying."}
+            self._remoteLoginSetupWorkerFinished.emit({**result,"primary_display_setting":True})
+        self._background_executor.submit(work)
+
+    @pyqtSlot(int)
+    def configureDisplayIdleTimeout(self, seconds):
+        if self._remote_setup_busy or self._closing:return
+        self._remote_setup_busy=True
+        self.remoteLoginSetupChanged.emit()
+        def work():
+            from monitorize.platform.system_setup import apply_display_idle_timeout
+            try:result=apply_display_idle_timeout(seconds)
+            except Exception:result={"success":False,"message":"Display timeout could not be saved. Refresh Settings before retrying."}
+            self._remoteLoginSetupWorkerFinished.emit({**result,"timeout_setting":True})
+        self._background_executor.submit(work)
+
     def _finish_remote_login_setup(self, result):
         if self._closing:
             return
         self._remote_setup_busy = False
-        if result.get("success"):
-            from monitorize.desktop.remote_login_runtime import RemoteLoginRuntime
-            if self._remote_login is not None:
-                self._remote_login.close()
-            self._remote_login = RemoteLoginRuntime(self)
-            self._remote_login.changed.connect(self._remote_login_changed)
+        if result.get('primary_display_setting') or result.get('timeout_setting'):
+            # This changes next boot only. Preserve the active desktop runtime.
+            self.remoteLoginSetupChanged.emit()
+            self.remoteLoginSetupFinished.emit(result)
+            return
+        from monitorize.desktop.remote_login_runtime import RemoteLoginRuntime
+        previous_enabled=self.remoteLoginEnabled
+        if self._remote_login is not None:
+            self._remote_login.close()
+        # A timeout or partial user-unit failure can follow a successful root
+        # enrollment change. Always reread the actual enrollment.
+        self._remote_login = RemoteLoginRuntime(self)
+        self._remote_login.changed.connect(self._remote_login_changed)
+        self._verified_configuration=None
+        if self.remoteLoginEnabled:
+            for bundle in (self.configuration_state.applied,self.configuration_state.saved,self.configuration_state.draft):
+                bundle['primary']['sunshine_capture']='kms'
+                bundle['streaming_backend']='sunshine'
+            self._streaming_backend='sunshine';self.streaming.streaming_backend='sunshine'
+            self.session.runtime_configuration=copy.deepcopy(self.configuration_state.applied)
+            self.configurationChanged.emit();self.clientDisplaySettingsChanged.emit()
+        elif previous_enabled:
+            error=self._reconcile_desktop_configuration()
+            if error:result={**result,'success':False,'partial':True,'message':error}
         self.remoteLoginSetupChanged.emit()
         self._remote_login_changed()
         self.remoteLoginSetupFinished.emit(result)
+
+    def _reconcile_desktop_configuration(self):
+        from monitorize.desktop.configuration_state import save_bundle
+        target=copy.deepcopy(self.configuration_state)
+        target.reconcile_desktop_capture(self._detected_de)
+        error=''
+        try:
+            if target.saved != self.configuration_state.saved:save_bundle(target.saved)
+        except OSError as exc:
+            # Publish corrected choices as an unsaved draft only. Disk and saved
+            # state must continue to agree when persistence fails.
+            self.configuration_state.draft=target.draft
+            error='Desktop capture settings could not be saved: '+str(exc)+'. Use Apply or Restart to retry.'
+        else:
+            self.configuration_state=target
+            self.session.runtime_configuration=copy.deepcopy(target.applied)
+        self._verified_configuration=None
+        self.configurationChanged.emit();self.clientDisplaySettingsChanged.emit()
+        return error
 
     def _remote_login_changed(self):
         if self._closing:
@@ -485,8 +550,12 @@ class MonitorizeBackend(QObject):
         self._desktop_fallback=True
         self._remote_login.close()
         self._remote_login.enabled=False
+        error=self._reconcile_desktop_configuration()
         self.remoteLoginChanged.emit();self.sessionChanged.emit()
         if result['generation']!=self._desktop_fallback_generation:return
+        if error:
+            self.configurationApplyFinished.emit(False,error)
+            return
         action=result['action']
         if action=='apply':self.applyConfiguration()
         elif action=='restart':self.restartSession()
@@ -800,7 +869,7 @@ class MonitorizeBackend(QObject):
             return
         self._vkms_authorization_busy = True
         def work():
-            from monitorize.platform.monitorize_vkms_dbus import VkmsServiceUnavailableError
+            from monitorize.platform.monitorize_vkms_dbus import VkmsServiceUnavailableError, VkmsProtocolError, VkmsCliNotFoundError
             result = None
             for attempt in range(3):
                 client = MonitorizeVkmsClient()
@@ -811,6 +880,9 @@ class MonitorizeBackend(QObject):
                     result = {"success": False, "message": str(exc)}
                     if attempt < 2:
                         time.sleep(0.5 * (attempt + 1))
+                except (VkmsProtocolError, VkmsCliNotFoundError) as exc:
+                    result = {"success": False, "host_update_required": True, "message": str(exc)}
+                    break
                 except Exception as exc:
                     result = {"success": False, "message": str(exc)}
                     break
@@ -1256,10 +1328,16 @@ class MonitorizeBackend(QObject):
         self._launch_next_sunshine_save()
 
     def _restart_finished(self, success, message):
+        if not success and self._restart.publish:
+            message='Settings saved. Restart failed: '+message
+        if success:
+            self._verified_configuration=copy.deepcopy(self.session.runtime_configuration)
+            if self.remoteLoginEnabled and not self._remote_login.status.get('capture_ready'):
+                message='Changes applied. Listener ready; video is checked when Moonlight connects.'
         if success and self._restart.publish and getattr(self, "_display_only_idle", False):
             message = "Changes saved. Use Create in Session to create the display."
-        if success and not self._restart.publish and self.configurationDirty:
-            message += " Pending changes remain unapplied; use Apply in Configure."
+        self._restart.message=message
+        self.configurationChanged.emit()
         self.configurationApplyFinished.emit(success, message)
 
     def _update_draft(self, group, values):
@@ -1279,8 +1357,7 @@ class MonitorizeBackend(QObject):
     def saveConfigurationForLater(self):
         if self.applyingConfiguration or self._closing:return
         try:
-            candidate=self.configuration_state.candidate()
-            if self.remoteLoginEnabled:self._validate_remote_candidate(candidate)
+            candidate=self.configuration_state.candidate(desktop=self._detected_de,remote_login=self.remoteLoginEnabled)
             from monitorize.desktop.configuration_state import save_bundle
             save_bundle(candidate)
             self.configuration_state.save_later(candidate)
@@ -1295,7 +1372,7 @@ class MonitorizeBackend(QObject):
 
     @pyqtProperty(str, notify=configurationChanged)
     def configurationValidationMessage(self):
-        try:self.configuration_state.candidate()
+        try:self.configuration_state.candidate(desktop=self._detected_de,remote_login=self.remoteLoginEnabled)
         except ValueError as exc:return str(exc)
         return ""
 
@@ -1310,11 +1387,19 @@ class MonitorizeBackend(QObject):
     @pyqtSlot()
     def applyConfiguration(self):
         if self.applyingConfiguration or self._closing:return
-        if self._remote_unavailable():
-            self._request_desktop_fallback('apply')
-            return
+        saved=False
         try:
-            candidate = self.configuration_state.candidate()
+            candidate = self.configuration_state.candidate(desktop=self._detected_de,remote_login=self.remoteLoginEnabled)
+            # Persist selected intent before any runtime authorization or restart.
+            # A failed launch may restore a working session, never the saved choices.
+            from monitorize.desktop.configuration_state import save_bundle
+            save_bundle(candidate)
+            self.configuration_state.save_later(candidate)
+            saved=True
+            self.configurationChanged.emit()
+            if self._remote_unavailable():
+                self._request_desktop_fallback('apply')
+                return
             if self.remoteLoginEnabled:self._validate_remote_candidate(candidate)
             if candidate["streaming_backend"] == "sunshine" and not self.remoteLoginEnabled:
                 if not self.sunshineAvailable:raise ValueError("Install Monitorize Sunshine before enabling streaming.")
@@ -1331,9 +1416,10 @@ class MonitorizeBackend(QObject):
                 if raw.get("streaming_customized") and raw.get("sunshine_gpu") and not resolve_encoding_gpu(raw.get("sunshine_encoder","Auto"),raw["sunshine_gpu"]):
                     raise ValueError("Selected encoding GPU is unavailable.")
             self._restart_display_only = self.session.active and self._streaming_backend == "none"
-            self._restart.begin(candidate, self.configuration_state.applied)
+            self._restart.begin(candidate, self._verified_configuration)
         except Exception as exc:
-            self.configurationApplyFinished.emit(False, str(exc))
+            message=('Settings saved. Restart failed: ' if saved else 'Settings could not be saved: ')+str(exc)
+            self.configurationApplyFinished.emit(False, message)
 
     @pyqtSlot()
     def restartSession(self):
@@ -1341,16 +1427,8 @@ class MonitorizeBackend(QObject):
         if self._remote_unavailable():
             self._request_desktop_fallback('restart')
             return
-        if self.configuration_state.restart_required:
-            # Restart applies saved changes, preserving any newer unsaved draft.
-            draft=copy.deepcopy(self.configuration_state.draft)
-            self.configuration_state.draft=copy.deepcopy(self.configuration_state.saved)
-            self.applyConfiguration()
-            self.configuration_state.draft=draft
-            return
-        applied = self.configuration_state.applied
-        self._restart_display_only = self.session.active and self._streaming_backend == "none"
-        self._restart.begin(applied, applied, publish=False)
+        # An explicit Restart is also an explicit request to use current choices.
+        self.applyConfiguration()
 
     def _stop_owned_session(self):
         # Intentional stop cancels timers before cleanup; do not cancel this transaction.
@@ -1417,9 +1495,7 @@ class MonitorizeBackend(QObject):
         return ""
 
     def _accept_configuration(self, bundle):
-        from monitorize.desktop.configuration_state import save_bundle
         draft=copy.deepcopy(self.configuration_state.draft)
-        save_bundle(bundle)
         self.configuration_state.accept(bundle)
         if draft != bundle:
             self.configuration_state.draft=draft
@@ -1435,6 +1511,8 @@ class MonitorizeBackend(QObject):
             self._validate_legacy_remote_changes(candidate)
         allowed={'sunshine_encoder','sunshine_gpu','sunshine_codec','sunshine_capture',
                  'streaming_customized','sunshine_native_pen_touch','enable_audio'}
+        if self._remote_login.status.get('desktop_mode_version',0)>=1:
+            allowed.update({'use_client_display_settings','resolution','fps','custom_w','custom_h','custom_fps'})
         old=self.configuration_state.applied
         if (any(candidate['primary'].get(k)!=old['primary'].get(k) for k in set(candidate['primary'])-allowed)
                 or candidate['second']!=old['second']):

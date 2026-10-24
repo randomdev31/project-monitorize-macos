@@ -48,6 +48,10 @@ class MonitorizeVkmsClient:
                     "The host VKMS service disconnected or did not respond. Recheck; if this repeats, inspect monitorize-vkms.service logs.",
                     "service_unavailable", raw_response={"message": str(exc)}) from exc
             message = str(exc)
+            if name == 'org.freedesktop.DBus.Error.UnknownMethod' and method == 'GetAuthorizationState':
+                raise VkmsProtocolError(
+                    'Update monitorize-vkms on the host and restart monitorize-vkms.service. '
+                    'The installed service does not support passwordless authorization.') from exc
             kind = "polkit_denied" if "polkit" in message.lower() or "denied" in message.lower() else "helper_error"
             raise VkmsCommandError(_translate_error_message(kind, message), kind,
                                    raw_response={"message": message}) from exc
@@ -81,12 +85,12 @@ class MonitorizeVkmsClient:
     def get_authorization_state(self):
         try:
             result = self._call('GetAuthorizationState', timeout=5)
-        except VkmsServiceUnavailableError:
+        except (VkmsServiceUnavailableError, VkmsProtocolError, VkmsCliNotFoundError):
             raise
         except MonitorizeVkmsError as exc:
             raise VkmsCommandError('Install or upgrade monitorize-vkms and restart its host service for unattended authorization: ' + str(exc)) from exc
         if type(result.get('authorization_version')) is not int or result.get('authorization_version') != 1 or type(result.get('unattended_enabled')) is not bool:
-            raise VkmsProtocolError('Upgrade monitorize-vkms for unattended authorization v1.')
+            raise VkmsProtocolError('Update monitorize-vkms on the host and restart monitorize-vkms.service for passwordless authorization v1.')
         return result
 
     def require_unattended(self):

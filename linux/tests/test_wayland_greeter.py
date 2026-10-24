@@ -31,3 +31,7 @@ class GreeterTests(unittest.TestCase):
         with patch('monitorize.remote_login.wayland_greeter.require_manager',return_value={'manager':'sddm.service','compositor':'kde'}):
             with self.assertRaises(PermissionError):activate_greeter(self.settings,self.context,'other',self.env,self.output,5,self.helper,Mock())
         self.helper._run_worker.assert_not_called()
+    def test_activation_returns_verified_worker_result_to_host_runtime(self):
+        result=dict(success=True,details=dict(width=1920,height=1080,refresh_rate=60))
+        self.helper._run_worker.return_value=result
+        self.assertIs(self.run_adapter('kde','kwin_wayland'),result)

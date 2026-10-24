@@ -45,3 +45,18 @@ class RestartTransactionTest(unittest.TestCase):
         self.assertFalse(self.tx.begin(self.new,self.old))
         self.assertFalse(self.tx.busy)
         self.assertFalse(self.tx.timer.isActive())
+
+    def test_failure_without_verified_previous_configuration_stays_stopped(self):
+        self.tx.begin(self.new, None)
+        self.launch_candidate();self.failure='capture is incompatible';self.tx.tick()
+        self.failure='';self.tx.tick();self.tx.tick()
+        self.assertFalse(self.tx.busy)
+        self.assertEqual(self.launch.call_count,1)
+        self.assertFalse(self.finished.call_args.args[0])
+        self.assertIn('capture is incompatible',self.finished.call_args.args[1])
+
+    def test_restart_failure_does_not_retry_the_identical_broken_configuration(self):
+        self.tx.begin(self.old,self.old,publish=False)
+        self.launch_candidate();self.failure='broken';self.tx.tick();self.tx.tick();self.tx.tick()
+        self.assertFalse(self.tx.busy)
+        self.assertEqual(self.launch.call_count,1)

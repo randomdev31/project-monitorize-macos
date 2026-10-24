@@ -44,11 +44,17 @@ def prepare(destination,binary,assets,*,vkms_source=None):
                 shutil.copyfile(source,target/source.name)
             # The standalone installer also keeps executable copies here. Update
             # them together so ordinary cleanup cannot bypass boot-lease guards.
-            for module,name in (('helper.py','monitorize-vkms-helper'),('dbus_service.py','monitorize-vkms-dbus-service')):
+            for module,name in (('helper.py','monitorize-vkms-helper'),('dbus_service.py','monitorize-vkms-dbus-service'),('authorization.py','monitorize-vkms-authorization')):
                 source=host/module
                 if source.is_file():
                     target=destination/'usr/libexec/monitorize-vkms'/name
                     target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,target)
+        if host is not None and (host/'authorization.py').is_file():
+            for name,relative in (
+                ('io.github.vinnavannewton.monitorize-vkms.policy','usr/share/polkit-1/actions'),
+                ('io.github.vinnavannewton.MonitorizeVkms1.xml','usr/share/dbus-1/interfaces')):
+                target=destination/relative/name;target.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copyfile(host.parent/'packaging'/name,target)
         helper=destination/'usr/libexec/monitorize/monitorize-system-setup'
         shutil.copyfile(ROOT/'packaging/common/monitorize-system-setup',helper);helper.chmod(0o755)
         policy=destination/'usr/share/polkit-1/actions/io.github.vinnavannewton.monitorize.system-setup.policy'

@@ -14,6 +14,18 @@ BUS='org.freedesktop.DBus'
 USER_CLASSES=('user','user-early','user-incomplete')
 
 
+class CallerAuthenticationError(PermissionError):
+    """Caller cannot be bound to the enrolled active graphical session."""
+
+
+def _console_scope(relative):
+    # GNOME Console places VTE children in an app-dbus slice, not directly in
+    # app.scope. Accept only its exact slice/UUID scope under this UID's app.slice.
+    return (len(relative)==3 and relative[0]=='app.slice'
+        and re.fullmatch(r'app-dbus\\x2d:[0-9]+\.[0-9]+\\x2dorg\.gnome\.Console\.slice',relative[1]) is not None
+        and re.fullmatch(r'vte-spawn-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\.scope',relative[2]) is not None)
+
+
 class LogindSessions:
     def __init__(self,bus,*,cgroup_reader=lambda pid:Path(f'/proc/{pid}/cgroup').read_text()):
         self.bus=bus;self.cgroup_reader=cgroup_reader
@@ -39,9 +51,9 @@ class LogindSessions:
                 for line in groups:
                     if not line.startswith('0::'+prefix):continue
                     relative=line[len('0::'+prefix):].split('/')
-                    if (len(relative)>=2 and relative[0]=='app.slice' and
+                    if (_console_scope(relative) or (len(relative)>=2 and relative[0]=='app.slice' and
                         (relative[1:] == ['monitorize-remote-controller.service'] or
-                         re.fullmatch(r'app-[^/]+\.(?:scope|service)',relative[1]))):
+                         re.fullmatch(r'app-[^/]+\.(?:scope|service)',relative[1])))):
                         valid=True;break
                 if not valid:raise ValueError()
                 user_path=self.bus.call(ROOT,MANAGER,'GetUserByPID',pid)
@@ -54,7 +66,7 @@ class LogindSessions:
                 values['Class'] not in USER_CLASSES or not values['Id']):raise ValueError()
             return dict(uid=uid,pid=pid,session=str(values['Id']))
         except Exception:
-            raise PermissionError('Caller is not the selected active local graphical session.') from None
+            raise CallerAuthenticationError('Caller is not the selected active local graphical session.') from None
 
     def snapshot(self):
         rows=self.bus.call(ROOT,MANAGER,'ListSessions')

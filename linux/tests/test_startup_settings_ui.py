@@ -84,7 +84,9 @@ with tempfile.TemporaryDirectory() as d:
             backend.vkmsAuthorizationReady.emit({'success':False,'message':'Unavailable fixture'});settle()
             assert not prop('vkmsAuthorization.success')
             assert not prop('vkmsAuthorization.unattended_enabled === false')
-            status.return_value={'available':True,'enabled':True,'supported':True}
+            primary=page.findChild(QObject,'loginPrimaryDisplayCheck');assert primary
+            assert not primary.property('enabled') and not primary.property('checked')
+            status.return_value={'available':True,'enabled':True,'supported':True,'manager':'gdm.service','login_primary_display':False}
             backend.remoteLoginSetupFinished.emit({'success':True,'message':'Reboot after setup.'});settle()
             assert prop('bootStatus.enabled')
             login=page.findChild(QObject,'loginStartupCheck')
@@ -95,6 +97,53 @@ with tempfile.TemporaryDirectory() as d:
             assert not nested.property('visible')
             e=QQmlExpression(qmlContext(page),page,'bootOptionsExpanded = true');e.evaluate();settle()
             assert nested.property('visible')
+            assert primary.property('enabled')
+            # Saving this boot-only preference must not replace the live runtime.
+            runtime=backend._remote_login
+            with patch('monitorize.platform.system_setup.apply_login_primary_display',return_value={'success':False,'message':'Cancelled'}) as save:
+                primary.setProperty('checked',True)
+                e=QQmlExpression(qmlContext(page),page,'loginPrimaryCheck.clicked()');e.evaluate();assert not e.hasError(),e.error().toString()
+                for _ in range(10):
+                    settle()
+                    if not backend.remoteLoginSetupBusy:break
+                save.assert_called_once_with(True)
+                assert not primary.property('checked')
+                assert backend._remote_login is runtime
+            def saved_primary(enabled):
+                status.return_value={**status.return_value,'login_primary_display':enabled}
+                return {'success':True,'reboot_required':True}
+            with patch('monitorize.platform.system_setup.apply_login_primary_display',side_effect=saved_primary) as save:
+                primary.setProperty('checked',True)
+                e=QQmlExpression(qmlContext(page),page,'loginPrimaryCheck.clicked()');e.evaluate();assert not e.hasError(),e.error().toString()
+                for _ in range(10):
+                    settle()
+                    if not backend.remoteLoginSetupBusy:break
+                save.assert_called_once_with(True)
+                assert primary.property('checked') and backend._remote_login is runtime
+            timeout=page.findChild(QObject,'displayIdleTimeoutSeconds');assert timeout
+            save_timeout=page.findChild(QObject,'saveDisplayIdleTimeout');assert save_timeout
+            assert timeout.property('value')==20 and timeout.property('enabled')
+            timeout.setProperty('value',60);assert save_timeout.property('enabled')
+            def saved_timeout(seconds):
+                status.return_value={**status.return_value,'display_idle_timeout_seconds':seconds}
+                return {'success':True,'message':'Display timeout saved.'}
+            with patch('monitorize.platform.system_setup.apply_display_idle_timeout',side_effect=saved_timeout) as save:
+                e=QQmlExpression(qmlContext(page),page,'saveDisplayTimeout.clicked()');e.evaluate();assert not e.hasError(),e.error().toString()
+                for _ in range(10):
+                    settle()
+                    if not backend.remoteLoginSetupBusy:break
+                save.assert_called_once_with(60)
+                assert timeout.property('value')==60 and backend._remote_login is runtime
+                assert not save_timeout.property('enabled')
+            timeout.setProperty('value',5)
+            with patch('monitorize.platform.system_setup.apply_display_idle_timeout',return_value={'success':False,'message':'Cancelled'}) as save:
+                backend.configureDisplayIdleTimeout(5)
+                for _ in range(10):
+                    settle()
+                    if not backend.remoteLoginSetupBusy:break
+                save.assert_called_once_with(5)
+                assert timeout.property('value')==60 and prop('settingsError')=='Cancelled'
+                assert backend._remote_login is runtime
             # Cancelling parent disable keeps both options selected.
             with patch('monitorize.platform.system_setup.apply_remote_login_setup',return_value={'success':False,'message':'Cancelled'}) as disable:
                 login.setProperty('checked',False)
@@ -112,6 +161,7 @@ with tempfile.TemporaryDirectory() as d:
             login_state[0]=True
             backend.remoteLoginSetupFinished.emit({'success':True});settle()
             assert not login_state[0] and not login.property('checked')
+            assert not primary.property('enabled')
             assert nested.property('visible')
             assert not boot.property('enabled')
             # Disabling just boot preserves login startup.
@@ -132,12 +182,14 @@ with tempfile.TemporaryDirectory() as d:
                     if not backend.remoteLoginSetupBusy:break
                 configure.assert_called_once_with(True)
             for capture in ('auto','kwin','x11'):
-                with patch('monitorize.desktop.backend.load_display_settings',return_value={'sunshine_capture':capture}), patch('monitorize.platform.system_setup.apply_remote_login_setup') as configure:
+                with patch('monitorize.desktop.backend.load_display_settings',return_value={'sunshine_capture':capture}), patch('monitorize.platform.system_setup.apply_remote_login_setup',return_value={'success':False,'message':'Cancelled'}) as configure:
                     boot.setProperty('checked',True)
                     backend.configureRemoteLogin(True);settle()
-                    configure.assert_not_called()
+                    for _ in range(10):
+                        settle()
+                        if not backend.remoteLoginSetupBusy:break
+                    configure.assert_called_once_with(True)
                     assert not boot.property('checked')
-                    assert 'KMS' in view.rootObject().property('startFailureMessage')
             # Transient status failure retries without requesting authorization.
             from monitorize.platform.monitorize_vkms_dbus import VkmsServiceUnavailableError
             client.return_value.get_authorization_state.reset_mock()

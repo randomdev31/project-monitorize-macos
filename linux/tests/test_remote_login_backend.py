@@ -32,7 +32,8 @@ def settle():
     loop=QEventLoop();QTimer.singleShot(100,loop.quit);loop.exec()
 with tempfile.TemporaryDirectory() as d:
     os.environ['XDG_CONFIG_HOME']=d
-    with patch('monitorize.desktop.remote_login_runtime.RemoteLoginRuntime',Runtime), \
+    with patch('monitorize.platform.remote_login_identity.desktop_fallback_allowed',return_value=False), \
+         patch('monitorize.desktop.remote_login_runtime.RemoteLoginRuntime',Runtime), \
          patch('monitorize.desktop.backend.get_local_ip',return_value='192.0.2.1'), \
          patch('monitorize.desktop.backend.find_sunshine_command',return_value=['fixture']), \
          patch('monitorize.desktop.backend.get_system_setup_status',return_value={'available':False}), \
@@ -46,6 +47,7 @@ with tempfile.TemporaryDirectory() as d:
             expression=QQmlExpression(view.rootContext(),view.rootObject(),'navigate("StreamingPage.qml")')
             expression.evaluate();assert not expression.hasError();settle()
             assert backend.remoteLoginEnabled and backend.isStreaming and backend.sessionRunning
+            assert backend.loadDisplaySettings()['sunshine_capture']=='kms', 'Reserved remote capture must not inherit desktop Auto'
             with patch.object(backend.session,'start') as normal:
                 backend.startConfiguredListeners();backend.startSession()
                 normal.assert_not_called()

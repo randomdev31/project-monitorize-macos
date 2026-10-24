@@ -87,3 +87,35 @@ class UserServiceTests(unittest.TestCase):
         self.assertEqual(LogindSessions(bus,cgroup_reader=lambda pid:group).authenticate(':1.50',1000)['uid'],1000)
         bus.session['Active']=False
         with self.assertRaises(PermissionError):LogindSessions(bus,cgroup_reader=lambda pid:group).authenticate(':1.50',1000)
+
+
+class ConsoleScopeTests(unittest.TestCase):
+    bus=UserServiceTests.bus
+    scope=r'app-dbus\x2d:1.2\x2dorg.gnome.Console.slice/vte-spawn-67aeeca0-325d-47da-ac07-0b2369d173b2.scope'
+    prefix='0::/user.slice/user-1000.slice/user@1000.service/app.slice/'
+
+    def test_gnome_console_nested_scope_uses_verified_active_graphical_session(self):
+        bus=self.bus()
+        reader=LogindSessions(bus,cgroup_reader=lambda pid:self.prefix+self.scope)
+        self.assertEqual(reader.authenticate(':1.50',1000)['session'],'s1')
+        for change in ({'User':(1001,'/user')},{'Active':False},{'Remote':True},
+                       {'Seat':('seat1','/seat')},{'Class':'greeter'},{'Type':'tty'}):
+            other=self.bus();other.session.update(change)
+            with self.subTest(change=change),self.assertRaises(PermissionError):
+                LogindSessions(other,cgroup_reader=lambda pid:self.prefix+self.scope).authenticate(':1.50',1000)
+
+    def test_console_scope_does_not_accept_other_slices_units_or_scope_shapes(self):
+        for scope in (self.scope.replace('org.gnome.Console','org.example.Other'),
+                      self.scope.replace('vte-spawn-','other-'),self.scope+'/child.scope',
+                      self.scope.replace('67aeeca0-325d-47da-ac07-0b2369d173b2','invalid'),
+                      'other.slice/'+self.scope,self.scope.replace('.Console.slice','.ConsoleOther.slice')):
+            with self.subTest(scope=scope),self.assertRaises(PermissionError):
+                LogindSessions(self.bus(),cgroup_reader=lambda pid:self.prefix+scope).authenticate(':1.50',1000)
+        with self.assertRaises(PermissionError):
+            LogindSessions(self.bus(),cgroup_reader=lambda pid:(self.prefix+self.scope).replace('1000','1001')).authenticate(':1.50',1000)
+
+    def test_authentication_failures_have_a_distinct_dbus_error(self):
+        from monitorize.remote_login.logind import CallerAuthenticationError
+        from monitorize.remote_login.dbus_service import ExportedService,AuthenticationFailed
+        def denied():raise CallerAuthenticationError('rejected')
+        with self.assertRaises(AuthenticationFailed):ExportedService._invoke(None,denied)

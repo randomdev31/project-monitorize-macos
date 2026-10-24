@@ -12,6 +12,7 @@ class HandoffService:
     def __init__(self,uid,sessions,units,*,journal=None):
         self.model=Supervisor(uid);self.sessions=sessions;self.units=units;self.epoch=secrets.token_hex(16)
         self.journal=journal
+        self.boot_error=''
         if journal is not None:self.model.stopped_session=journal.load()
         self.owner=None;self.owner_session=None;self.ready=False;self.boot_ready=False;self.boot_listening=False;self.boot_phase='';self.listening=False;self.desktop_phase='';self.startup_error='';self._lock=RLock()
 
@@ -24,7 +25,9 @@ class HandoffService:
                 state='error'
             if state=='greeter_listening':
                 state='login_available' if self.boot_ready else self.boot_phase if self.boot_listening and self.boot_phase else state
-            return dict(desktop_options_version=1,startup_error=self.startup_error,state=state,epoch=self.epoch,enabled=self.model.enabled,capture_ready=self.ready or self.boot_ready,
+                if self.boot_error:state='error'
+            error=self.boot_error if self.model.state=='greeter_listening' else self.startup_error
+            return dict(display_idle_timeout_seconds=getattr(self,'grace_timeout',None) or (self.display_timeout() if hasattr(self,'display_timeout') else 20),desktop_mode_version=1,desktop_options_version=1,startup_error=error,state=state,epoch=self.epoch,enabled=self.model.enabled,capture_ready=self.ready or self.boot_ready,
                         session=self.model.session or '',listening=self.listening,
                         output_name=self.output_name() if hasattr(self,'output_name') else '')
 
@@ -37,12 +40,15 @@ class HandoffService:
                     boot_health=self.units.readiness('boot') if boot else {}
                     self.boot_ready=bool(boot_health.get('capture_ready'))
                     self.boot_listening=bool(boot_health.get('listening'))
+                    self.boot_error=str(boot_health.get('startup_error') or '')[:512]
                     self.boot_phase={'desktop_listening':'greeter_idle','disconnect_grace':'greeter_disconnect_grace','streaming':'greeter_preparing'}.get(boot_health.get('state'),'')
                     health=self.units.readiness('desktop') if desktop else {}
                     self.startup_error=str(health.get('startup_error') or '')[:512]
                     self.ready=bool(health.get('capture_ready'))
                     self.listening=bool(health.get('listening'))
                     self.desktop_phase=health.get('state','') if health.get('state') in ('desktop_listening','disconnect_grace','streaming','removing') else ''
+                    active_health=health if desktop else boot_health
+                    self.grace_timeout=active_health.get('display_idle_timeout_seconds') if active_health.get('state')=='disconnect_grace' else None
                 else:self.boot_ready=False;self.boot_listening=False
                 # After service restart an unclaimed existing engine is stopped,
                 # never assigned to whichever desktop happens to call first.

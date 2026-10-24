@@ -1,6 +1,7 @@
 """Root policy and bounded desktop descriptor validation; no secret retrieval."""
 from dataclasses import dataclass
 import json
+import math
 import os
 from pathlib import Path
 import pwd
@@ -21,11 +22,19 @@ class Settings:
     encoder: str
     adapter: str
     manager: str = "plasmalogin.service"
+    login_primary_display: bool = False
+    display_idle_timeout_seconds: int = 20
 
     @property
     def directory(self):return Path('/var/lib/monitorize/remote-login')/str(self.uid)
     @property
     def runtime(self):return Path('/run/monitorize-remote-login')/str(self.uid)
+
+
+def validate_idle_timeout(value):
+    if type(value) is not int or not 1 <= value <= 600:
+        raise ValueError('Display removal timeout must be an integer from 1 to 600 seconds.')
+    return value
 
 
 def read_settings(path=SETTINGS,*,owner_uid=0,account_lookup=pwd.getpwuid):
@@ -48,6 +57,9 @@ def read_settings(path=SETTINGS,*,owner_uid=0,account_lookup=pwd.getpwuid):
             account.pw_dir!=values['home']):raise ValueError()
         from .display_managers import MANAGERS
         if values['manager'] not in MANAGERS:raise ValueError()
+        timeout=validate_idle_timeout(values.get('display_idle_timeout_seconds',20))
+        primary=values.get('login_primary_display',False)
+        if type(primary) is not bool:raise ValueError()
         encoder=values['encoder'];adapter=values['adapter'];profile=values['profile']
         if encoder not in ('software','vaapi','nvenc'):raise ValueError()
         if not isinstance(adapter,str) or (adapter and not re.fullmatch(r'/dev/dri/renderD[0-9]+',adapter)):raise ValueError()
@@ -61,13 +73,21 @@ def read_settings(path=SETTINGS,*,owner_uid=0,account_lookup=pwd.getpwuid):
             adapter=values.get('reconnect_adapter','')
             if encoder not in ('software','vaapi','nvenc'):raise ValueError()
             if not isinstance(adapter,str) or (adapter and not re.fullmatch(r'/dev/dri/renderD[0-9]+',adapter)):raise ValueError()
-        return Settings(enabled,uid,gid,account.pw_name,account.pw_dir,profile,encoder,adapter,values['manager'])
+        return Settings(enabled,uid,gid,account.pw_name,account.pw_dir,profile,encoder,adapter,values['manager'],primary,timeout)
     except (OSError,ValueError,TypeError,KeyError):
         raise ValueError('Remote-login configuration is unsafe, unsupported or no longer matches its account.') from None
 
 
+def validate_display_mode(mode):
+    if (not isinstance(mode,(list,tuple)) or len(mode)!=3 or type(mode[0]) is not int or type(mode[1]) is not int
+        or not 1<=mode[0]<=4095 or not 1<=mode[1]<=4095 or type(mode[2]) not in (int,float)
+        or not math.isfinite(mode[2]) or not 24<=mode[2]<=240):
+        raise ValueError('Display mode must be 1–4095 pixels and 24–240 Hz.')
+    return list(mode)
+
+
 def validate_descriptor(values,settings,expected_output):
-    allowed={'capture','output_name','pipewire_node','wayland_display','display','stream_options'}
+    allowed={'capture','output_name','pipewire_node','wayland_display','display','stream_options','client_display_mode','display_mode'}
     if not isinstance(values,dict) or set(values)-allowed:raise ValueError('Unsupported desktop descriptor fields.')
     capture=values.get('capture');output=values.get('output_name')
     if capture not in ('kms','kwin') or output!=expected_output or not isinstance(output,str) or not re.fullmatch(r'Virtual-[0-9]+',output):
@@ -83,6 +103,10 @@ def validate_descriptor(values,settings,expected_output):
             value=values[name]
             if not isinstance(value,str) or not re.fullmatch(pattern,value):raise ValueError('Invalid graphical session endpoint.')
             result[name]=value
+    if 'client_display_mode' in values:
+        if type(values['client_display_mode']) is not bool:raise ValueError('Invalid client display setting.')
+        result['client_display_mode']=values['client_display_mode']
+    if 'display_mode' in values:result['display_mode']=validate_display_mode(values['display_mode'])
     if 'stream_options' in values:
         options=values['stream_options']
         enums={'encoder':('', 'nvenc', 'vaapi', 'vulkan', 'software'),

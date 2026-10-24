@@ -69,3 +69,15 @@ class DeploymentTests(unittest.TestCase):
     def test_retired_unit_cannot_be_reintroduced_by_staging(self):
         self.file('usr/lib/systemd/system/monitorize-remote-login-persistent@.service',b'old')
         with self.assertRaises(ValueError):self.installer.install(self.stage)
+
+    def test_complete_bundle_requires_primary_capture_module(self):
+        for relative in self.module.FILES:self.file(relative,b'')
+        self.file(self.module.ENGINE,b'\x7fELF MONITORIZE_CONTROL_PROTOCOL=1 MONITORIZE_STRICT_KMS_OUTPUT_MISSING')
+        self.file('usr/share/monitorize/sunshine/assets/web/index.html',b'web')
+        for source in (ROOT/'linux/monitorize/remote_login').glob('*.py'):
+            if source.name!='login_primary.py':
+                self.file('usr/lib/monitorize-remote-login/monitorize/remote_login/'+source.name,source.read_bytes())
+        self.file('usr/lib/monitorize-vkms/monitorize_vkms/helper.py',b'BOOT_DISPLAY_PROTOCOL = 1')
+        self.file('usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py',b'GREETER_ON_DEMAND_PROTOCOL = 1\nIDLE_DISPLAY_PROTOCOL = 1')
+        with self.assertRaisesRegex(ValueError,'login_primary.py'):
+            self.module.validate_bundle(self.stage)

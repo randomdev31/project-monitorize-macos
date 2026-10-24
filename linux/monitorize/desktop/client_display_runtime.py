@@ -307,6 +307,13 @@ class ClientDisplayRuntime(QObject):
         return adapter, environment
 
     def _check_capture_setup(self, instance, config):
+        from monitorize.desktop.configuration_state import capture_compatibility_error
+        error=capture_compatibility_error(config.get('de',''),config.get('display_type','Extend'),
+            config.get('virtual_display_creator','native'),config.get('capture','auto'))
+        if error:
+            self.error=error
+            self.logAppended.emit('SUNSHINE','ERROR: '+error)
+            return False
         from monitorize.desktop.streaming_controller import _sunshine_capture_method
         from monitorize.platform.sunshine_service import get_sunshine_kms_setup_error
         requested = config.get('capture', 'auto')

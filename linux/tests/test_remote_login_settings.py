@@ -19,6 +19,15 @@ class SettingsTests(unittest.TestCase):
         self.path.write_text(json.dumps(self.values));self.path.chmod(0o600)
         return read_settings(self.path,owner_uid=os.getuid(),account_lookup=lambda uid:self.account)
 
+    def test_display_timeout_defaults_round_trips_and_rejects_invalid_values(self):
+        self.assertEqual(self.load().display_idle_timeout_seconds,20)
+        for value in (1,60,600):
+            self.values['display_idle_timeout_seconds']=value
+            self.assertEqual(self.load().display_idle_timeout_seconds,value)
+        for value in (0,601,True,20.0,'20',None):
+            self.values['display_idle_timeout_seconds']=value
+            with self.subTest(value=value),self.assertRaises(ValueError):self.load()
+
     def test_account_binding_and_fixed_paths(self):
         settings=self.load()
         self.assertEqual(settings.directory,Path('/var/lib/monitorize/remote-login/1000'))
@@ -81,3 +90,12 @@ class SettingsTests(unittest.TestCase):
         for invalid in ({'command':'evil'},{'encoder':'nvenc\nfile_state=evil'},
                         {'adapter_name':'../../other'},{'hevc_mode':True}, {'stream_audio':'maybe'}):
             with self.assertRaises(ValueError):validate_descriptor(dict(base,stream_options=invalid),settings,'Virtual-4')
+
+    def test_login_primary_defaults_off_and_accepts_only_booleans(self):
+        self.assertFalse(self.load().login_primary_display)
+        self.values['manager']='gdm.service'
+        self.values['login_primary_display']=True
+        self.assertTrue(self.load().login_primary_display)
+        for value in (1,0,'true',None,[],{}):
+            self.values['login_primary_display']=value
+            with self.subTest(value=value),self.assertRaises(ValueError):self.load()

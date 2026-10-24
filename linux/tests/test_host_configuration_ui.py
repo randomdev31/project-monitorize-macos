@@ -103,14 +103,43 @@ with tempfile.TemporaryDirectory() as d:
             assert not backend.configurationRestartRequired
             backend.saveVirtualDisplaySettings([dict(backend.loadVirtualDisplaySettings()[0],resolution='2560x1440')])
             backend.applyConfiguration();backend._restart.tick();backend._restart.tick()
-            # Explicit restart does not apply newer draft edits.
+            # Explicit Restart applies the latest draft in one operation.
             backend.saveVirtualDisplaySettings([dict(backend.loadVirtualDisplaySettings()[0],resolution='1280x720')])
             backend.restartSession();backend._restart.tick();backend._restart.tick()
-            assert backend.configurationDirty
-            assert backend.session.configuration()['res']=='2560x1440'
-            assert settings.load_display_settings()['resolution']=='2560x1440'
+            assert not backend.configurationDirty
+            assert backend.session.configuration()['res']=='1280x720'
+            assert settings.load_display_settings()['resolution']=='1280x720'
             backend.stopSession();backend.startConfiguredListeners()
             assert not runtime.active,'Tray reactivation revoked explicit Stop'
+            # Apply persists the creator even when authorization rejects restart.
+            backend.configuration_state.update('primary',{'virtual_display_creator':'vkms'})
+            with patch.object(vkms.return_value,'require_unattended',side_effect=RuntimeError('Authorization unavailable')):
+                backend.applyConfiguration()
+            assert settings.load_display_settings()['virtual_display_creator']=='vkms'
+            assert backend.configuration_state.saved['primary']['virtual_display_creator']=='vkms'
+            assert not backend.configurationDirty and not backend.applyingConfiguration
+            backend.configuration_state.update('primary',{'virtual_display_creator':'native'})
+            backend.applyConfiguration();backend._restart.tick();backend._restart.tick()
+            # A failed launch restores only the old runtime; disk retains intent.
+            previous_resolution=backend.session.configuration()['res']
+            backend.configuration_state.update('primary',{'resolution':'1600x900'})
+            backend.applyConfiguration();backend._restart.tick()
+            with patch.object(backend._restart,'failure',return_value='encoder startup failed'):
+                backend._restart.tick()
+            backend._restart.tick();backend._restart.tick()
+            assert not backend.applyingConfiguration
+            assert settings.load_display_settings()['resolution']=='1600x900'
+            assert backend.configuration_state.saved['primary']['resolution']=='1600x900'
+            assert backend.session.configuration()['res']==previous_resolution
+            assert not backend.configurationDirty and backend.configurationRestartRequired
+            assert 'Settings saved' in backend.configurationMessage
+            # A failed disk write does not stop or launch anything.
+            before=len(launches)
+            backend.configuration_state.update('primary',{'resolution':'1920x1080'})
+            with patch('monitorize.desktop.configuration_state.save_bundle',side_effect=OSError('disk full')):
+                backend.applyConfiguration()
+            assert len(launches)==before and not backend.applyingConfiguration
+            assert backend.configurationDirty and settings.load_display_settings()['resolution']=='1600x900'
             # Removing a configured second card is draft-only too.
             backend.saveVirtualDisplaySettings([backend.loadVirtualDisplaySettings()[0],dict(id=2,resolution='1920x1080',fps='60',use_client_display_settings=True)])
             assert backend.configuration_state.draft['second']['enabled']
@@ -125,6 +154,35 @@ with tempfile.TemporaryDirectory() as d:
             assert backend.appliedStreamingBackend=='none'
             assert len(launches)==before
             assert not runtime.active
+            # Partial root setup must refresh ownership and reconcile desktop capture.
+            backend._detected_de='gnome'
+            backend.configuration_state.update('primary',{'sunshine_capture':'kms','virtual_display_creator':'native'})
+            backend.configuration_state.accept(backend.configuration_state.candidate(remote_login=True))
+            backend._remote_login.enabled=True
+            backend._finish_remote_login_setup({'success':False,'partial':True,'message':'Controller failed'})
+            assert not backend.remoteLoginEnabled
+            assert backend.configuration_state.saved['primary']['sunshine_capture']=='auto'
+            assert settings.load_display_settings()['sunshine_capture']=='auto'
+            assert backend._verified_configuration is None
+            # Disk failures keep corrected choices dirty, rather than claiming a save.
+            backend.configuration_state.update('primary',{'sunshine_capture':'kms'})
+            backend.configuration_state.accept(backend.configuration_state.candidate(remote_login=True))
+            settings.save_display_settings(resolution='1280x720',sunshine_capture='kms')
+            backend._remote_login.enabled=True
+            with patch('monitorize.desktop.configuration_state.save_bundle',side_effect=OSError('disk full')):
+                backend._finish_remote_login_setup({'success':True})
+            assert backend.configuration_state.saved['primary']['sunshine_capture']=='kms'
+            assert backend.configuration_state.draft['primary']['sunshine_capture']=='auto'
+            assert backend.configurationDirty
+            assert settings.load_display_settings()['sunshine_capture']=='kms'
+            # Ownership fallback performs the same capture reconciliation.
+            backend._remote_login.enabled=True
+            backend._desktop_fallback_generation=7
+            backend._finish_desktop_fallback({'success':True,'generation':7,'action':'restart'})
+            backend._restart.tick();backend._restart.tick()
+            assert not backend.applyingConfiguration
+            assert backend.session.configuration()['capture']=='auto'
+            assert settings.load_display_settings()['sunshine_capture']=='auto'
             view.setSource(QUrl());backend.close()
 print('Automatic launch, live QML draft edits, Apply, Restart and Stop passed')
 '''

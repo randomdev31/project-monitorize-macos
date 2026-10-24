@@ -4,6 +4,12 @@ import re
 from monitorize.config.settings import CAPTURE_MODES, _normalize_display_settings
 
 
+def capture_compatibility_error(desktop, display_type, creator, capture):
+    if desktop == 'gnome' and display_type == 'Extend' and creator == 'native' and capture == 'kms':
+        return 'KMS capture requires a VKMS display. Select Auto capture for a native GNOME virtual display.'
+    return ''
+
+
 class ConfigurationState:
     def __init__(self, primary, second, general):
         self.applied = copy.deepcopy(dict(primary=primary, second=second,
@@ -20,7 +26,17 @@ class ConfigurationState:
     def update(self, group, values):
         self.draft[group].update(copy.deepcopy(values))
 
-    def candidate(self):
+    def reconcile_desktop_capture(self, desktop):
+        """Release reserved-output settings without discarding unrelated edits."""
+        if desktop != 'gnome':return
+        for bundle in (self.applied, self.saved, self.draft):
+            primary=bundle['primary']
+            if primary.get('display_type') != 'Extend' or primary.get('virtual_display_creator','native') != 'native':
+                continue
+            for raw in (primary, bundle['second']):
+                if raw.get('sunshine_capture') == 'kms':raw['sunshine_capture']='auto'
+
+    def candidate(self, *, desktop='', remote_login=False):
         bundle = copy.deepcopy(self.draft)
         if bundle['streaming_backend'] not in ('none', 'sunshine'):
             raise ValueError('Select a supported streaming backend.')
@@ -41,6 +57,10 @@ class ConfigurationState:
                 raise ValueError(label + ': unsupported codec.')
             if raw.get('sunshine_capture', 'auto') not in CAPTURE_MODES:
                 raise ValueError(label + ': unsupported capture method.')
+            if not remote_login and bundle['streaming_backend'] == 'sunshine':
+                error=capture_compatibility_error(desktop, primary.get('display_type'),
+                    primary.get('virtual_display_creator','native'),raw.get('sunshine_capture'))
+                if error:raise ValueError(label + ': ' + error)
             if primary.get('display_type') == 'Mirror' or (raw.get('use_client_display_settings') and bundle['streaming_backend'] == 'sunshine'):
                 continue
             resolution = str(raw.get('resolution','')).split(' ')[0]

@@ -50,7 +50,7 @@ class ManualIdentityTests(unittest.TestCase):
         from types import SimpleNamespace
         from monitorize.remote_login import settings
         record=SimpleNamespace(uid=os.getuid(),enabled=False,directory=Path('/private/managed'))
-        with patch.object(settings.SETTINGS.__class__,'exists',return_value=True),patch.object(settings,'read_settings',return_value=record):
+        with patch('monitorize.platform.remote_login_identity.desktop_fallback_allowed',return_value=False),patch.object(settings.SETTINGS.__class__,'exists',return_value=True),patch.object(settings,'read_settings',return_value=record):
             paths=service._enrolled_manual_identity(1)
             self.assertEqual(paths.state,Path('/private/managed/identity/sunshine_state.json'))
             self.assertIsNone(service._enrolled_manual_identity(2))

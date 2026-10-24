@@ -49,6 +49,14 @@ class ClientDisplayRuntimeTest(unittest.TestCase):
         self.assertEqual(slot.error, message)
         self.assertEqual(self.runtime.error, message)
 
+    def test_native_gnome_kms_is_rejected_before_launching_a_listener(self):
+        from monitorize.desktop.client_display_runtime import ClientSlot
+        slot=ClientSlot(2,{'de':'gnome','capture':'kms','virtual_display_creator':'native'})
+        with patch('monitorize.platform.sunshine_service.get_sunshine_kms_setup_error',return_value=''), patch('monitorize.desktop.client_display_runtime.start_sunshine',return_value=(True,'')) as launch:
+            self.assertFalse(self.runtime._launch(slot))
+        launch.assert_not_called()
+        self.assertIn('Auto',slot.error)
+
     def test_kms_manual_card_reports_command_before_creating_display(self):
         message = 'Run: sudo setcap cap_sys_admin+p /test/sunshine'
         with patch('monitorize.platform.sunshine_service.get_sunshine_kms_setup_error', return_value=message), patch.object(self.runtime, '_prepare') as prepare:

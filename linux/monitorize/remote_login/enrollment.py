@@ -175,7 +175,9 @@ def enable(uid):
         os.chown(path,uid,account.pw_gid)
     values=dict(schema_version=1,enabled=True,uid=uid,gid=account.pw_gid,username=account.pw_name,
                 home=account.pw_dir,profile=str(profile),manager=manager['manager'],encoder='software',adapter='')
-    if existing is not None:values.update(encoder=existing.encoder,adapter=existing.adapter)
+    if existing is not None:values.update(encoder=existing.encoder,adapter=existing.adapter,
+        login_primary_display=getattr(existing,'login_primary_display',False),
+        display_idle_timeout_seconds=getattr(existing,'display_idle_timeout_seconds',20))
     caps=commands.run(['/usr/sbin/getcap','--',str(ENGINE)])
     old_caps=caps.removeprefix(str(ENGINE)).strip()
     changed='cap_sys_admin' not in old_caps
@@ -200,7 +202,9 @@ def disable(uid):
     with acquire_identity_lock(identity_paths(settings.directory),uid=uid):pass
     files=RootFiles()
     values=dict(schema_version=1,enabled=False,uid=settings.uid,gid=settings.gid,username=settings.username,
-                home=settings.home,profile=settings.profile,manager=getattr(settings,'manager','plasmalogin.service'),encoder=settings.encoder,adapter=settings.adapter)
+                home=settings.home,profile=settings.profile,manager=getattr(settings,'manager','plasmalogin.service'),encoder=settings.encoder,adapter=settings.adapter,
+                login_primary_display=getattr(settings,'login_primary_display',False),
+                display_idle_timeout_seconds=getattr(settings,'display_idle_timeout_seconds',20))
     configure_disabled(values,files=files,commands=commands)
     restore_linger(uid,commands=commands)
     try:remove_reserved(uid)
@@ -239,10 +243,12 @@ def remove_reserved(uid, *, release=False):
         sys.path.insert(0,'/usr/lib/monitorize-vkms')
         from monitorize_vkms.boot_display import desktop_operation_installed
         require_installed(sys.modules['monitorize_vkms.boot_display'].__file__)
-        with acquire_identity_lock(identity_paths(settings.directory),uid=uid):
-            from monitorize_vkms import helper
-            session,_=helper._active_session(uid)
-            desktop_operation_installed(uid,session,'release' if release or not settings.enabled else 'idle',engines_stopped=True)
+        # The installed facade owns the lifecycle and identity locks, and checks
+        # engine cgroups while holding them. Taking the same flock here prevents
+        # its transaction from ever reaching release (flock is not reentrant).
+        from monitorize_vkms import helper
+        session,_=helper._active_session(uid)
+        desktop_operation_installed(uid,session,'release' if release or not settings.enabled else 'idle',engines_stopped=True)
         return dict(success=True,changed=True,message='Reserved remote-login display removed. '+('Pairing and reservation retained.' if settings.enabled else 'Slot released for normal streaming; pairing retained.'))
     finally:bus.close()
 
@@ -260,29 +266,89 @@ def desktop_fallback(uid):
     commands=Commands()
     units=['monitorize-remote-login.service',f'monitorize-remote-login-boot@{uid}.service',
            f'monitorize-remote-login-desktop@{uid}.service']
-    # /run masks disappear at reboot; persistent enablement is untouched.
-    commands.run(['/usr/bin/systemctl','mask','--runtime',*units])
-    commands.run(['/usr/bin/systemctl','stop',*units])
-    for unit in units:
-        if commands.run(['/usr/bin/systemctl','show',unit,'--property=LoadState','--value'])!='masked':
-            raise RuntimeError('The boot engine could not be paused safely until reboot.')
-    # Verifies coordinator cgroups, both managed engines and identity lock before
-    # releasing the protected mon1 lease. No boot configuration is rewritten.
-    remove_reserved(uid,release=True)
-    actual,_=helper._active_session(uid)
-    if actual!=session:raise RuntimeError('Desktop session changed during fallback.')
-    from monitorize.platform.remote_login_identity import fallback_grant_path
-    grant=dict(uid=uid,session=session,boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip())
-    RootFiles().write(str(fallback_grant_path(uid)).lstrip('/'),json.dumps(grant),0o644)
+    previous_masks={unit:commands.run(['/usr/bin/systemctl','show',unit,'--property=LoadState','--value'])=='masked'
+                    for unit in units}
+    was_active=commands.run(['/usr/bin/systemctl','show',units[0],'--property=ActiveState','--value'])=='active'
+    try:
+        # /run masks disappear at reboot; persistent enablement is untouched.
+        commands.run(['/usr/bin/systemctl','mask','--runtime',*units])
+        commands.run(['/usr/bin/systemctl','stop',*units])
+        for unit in units:
+            if commands.run(['/usr/bin/systemctl','show',unit,'--property=LoadState','--value'])!='masked':
+                raise RuntimeError('The boot engine could not be paused safely until reboot.')
+        remove_reserved(uid,release=True)
+        actual,_=helper._active_session(uid)
+        if actual!=session:raise RuntimeError('Desktop session changed during fallback.')
+        from monitorize.platform.remote_login_identity import fallback_grant_path
+        grant=dict(uid=uid,session=session,boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip())
+        RootFiles().write(str(fallback_grant_path(uid)).lstrip('/'),json.dumps(grant),0o644)
+    except Exception as error:
+        # A failed recovery must not strand the listener behind our /run masks.
+        # Keep administrator masks which were present before this request.
+        try:
+            created=[unit for unit in units if not previous_masks[unit]]
+            if created:commands.run(['/usr/bin/systemctl','unmask','--runtime',*created])
+            if was_active and not previous_masks[units[0]]:
+                commands.run(['/usr/bin/systemctl','start',units[0]])
+        except Exception as restore_error:
+            raise RuntimeError(str(error)+'; restoring managed streaming also failed: '+str(restore_error)) from error
+        raise
     return dict(success=True,message='Desktop streaming is available. Start at boot remains enabled for the next reboot.')
 
 
-def main(action):
+LOGIN_PRIMARY_DISPLAY_PROTOCOL = 1
+
+
+def configure_login_primary_display(uid, enabled):
+    """Save a next-boot capture preference without touching the active stream."""
+    settings=read_settings()
+    if uid!=settings.uid or not settings.enabled:
+        raise PermissionError('Enable Start at boot for this account before changing login-screen capture.')
+    if type(enabled) is not bool:raise ValueError('Login-screen display preference must be a boolean.')
+    if enabled and settings.manager!='gdm.service':
+        raise ValueError('Primary login-screen display capture currently requires GNOME with GDM.')
+    files=RootFiles()
+    relative=str(SETTINGS).lstrip('/')
+    previous=files._read(files._path(relative))
+    if previous is None:raise ValueError('Remote-login enrollment disappeared; retry setup.')
+    values=json.loads(previous[0])
+    if values.get('uid')!=uid or values.get('enabled') is not True or values.get('manager')!=settings.manager:
+        raise PermissionError('Remote-login enrollment changed; refresh Settings before retrying.')
+    values['login_primary_display']=enabled
+    files.write(relative,json.dumps(values),previous[1])
+    return dict(success=True,reboot_required=True,message='Login-screen display preference saved for the next boot.')
+
+
+DISPLAY_IDLE_TIMEOUT_PROTOCOL = 1
+
+
+def configure_display_idle_timeout(uid, seconds):
+    from .settings import validate_idle_timeout
+    seconds=validate_idle_timeout(seconds)
+    settings=read_settings()
+    if uid!=settings.uid or not settings.enabled:
+        raise PermissionError('Enable Start at boot for this account before changing the display timeout.')
+    files=RootFiles();relative=str(SETTINGS).lstrip('/')
+    previous=files._read(files._path(relative))
+    if previous is None:raise ValueError('Remote-login enrollment disappeared; retry setup.')
+    values=json.loads(previous[0])
+    if values.get('uid')!=uid or values.get('enabled') is not True:
+        raise PermissionError('Remote-login enrollment changed; refresh Settings before retrying.')
+    values['display_idle_timeout_seconds']=seconds
+    files.write(relative,json.dumps(values),previous[1])
+    return dict(success=True,display_idle_timeout_seconds=seconds,
+                message='Display timeout saved. Applies to future idle periods; current streams and timers continue.')
+
+
+def main(action, seconds=None):
     if os.geteuid()!=0:raise RuntimeError('Administrator setup is required.')
     require_installed(__file__)
     raw=os.environ.get('PKEXEC_UID','')
     if not raw.isdigit() or int(raw)<=0:raise RuntimeError('Run setup through Monitorize administrator authorization.')
-    try:result={'enable':enable,'disable':disable,'remove':remove_reserved,'fallback':desktop_fallback}[action](int(raw))
+    try:result={'enable':enable,'disable':disable,'remove':remove_reserved,'fallback':desktop_fallback,
+        'primary-on':lambda uid:configure_login_primary_display(uid,True),
+        'primary-off':lambda uid:configure_login_primary_display(uid,False),
+        'timeout':lambda uid:configure_display_idle_timeout(uid,seconds)}[action](int(raw))
     except Exception as error:
         result={'success':False,'message':str(error)}
     print(json.dumps(result));return 0 if result['success'] else 1

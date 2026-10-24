@@ -96,6 +96,7 @@ Item {
                 }
             }
             SectionCard {
+                objectName: "remoteLoginCard"
                 title: "REMOTE LOGIN"; symbol: "session"
                 visible: backend.remoteLoginEnabled
                 Layout.fillWidth: true
@@ -253,11 +254,13 @@ Item {
                     }
                 }
             }
-            Flow {
+            RowLayout {
+                objectName: "sessionActionButtons"
                 Layout.fillWidth: true
                 spacing: 10
-                CustomButton { text: "Pair Moonlight PIN"; iconSymbol: "link"; implicitHeight: 46; primary: false; visible: backend.appliedStreamingBackend !== "none"; enabled: backend.sessionRunning && !backend.sessionBusy; onClicked: page.openPair(1) }
+                CustomButton { objectName: "pairMoonlightButton"; Layout.fillWidth: true; text: "Pair Moonlight PIN"; iconSymbol: "link"; implicitHeight: 46; primary: false; visible: backend.appliedStreamingBackend !== "none"; enabled: backend.sessionRunning && !backend.sessionBusy; onClicked: page.openPair(1) }
                 CustomButton {
+                    Layout.fillWidth: true
                     text: "Save Preset"; iconSymbol: "bookmark"; primary: false; enabled: backend.canSavePreset
                     implicitWidth: 150; implicitHeight: 46
                     onClicked: {
@@ -268,6 +271,7 @@ Item {
                     }
                 }
                 CustomButton {
+                    Layout.fillWidth: true
                     text: backend.appliedStreamingBackend === "none" ? (backend.isStreaming ? "Remove" : "Create")
                         : backend.applyingConfiguration ? "Restarting…" : "Restart"
                     implicitWidth: 150; implicitHeight: 46
@@ -281,6 +285,8 @@ Item {
                     }
                 }
                 CustomButton {
+                    Layout.fillWidth: true
+                    objectName: "stopStreamButton"
                     text: "Stop"; primary: false; iconSymbol: "stop"
                     implicitWidth: 150; implicitHeight: 46
                     iconTint: theme.dark ? "#ff777f" : "#c03943"
@@ -288,12 +294,13 @@ Item {
                     onClicked: backend.stopSession()
                 }
                 CustomButton {
+                    Layout.fillWidth: true
                     text: "Start added display"
                     visible: false
                     enabled: !backend.sessionBusy
                     onClicked: backend.startSession()
                 }
-                CustomButton { text: "Display Settings"; primary: false; visible: backend.canConfigureDisplay; onClicked: backend.configureDisplay() }
+                CustomButton { Layout.fillWidth: true; text: "Display Settings"; primary: false; visible: backend.canConfigureDisplay; onClicked: backend.configureDisplay() }
             }
             TextEdit {
                 text: backend.sunshineSettingsMessage

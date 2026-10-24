@@ -27,6 +27,8 @@ Item {
         bootStatus = backend.getRemoteLoginSetupStatus()
         settingsLoading = true
         bootCheck.checked = bootStatus.enabled === true
+        displayTimeout.value = bootStatus.display_idle_timeout_seconds || 20
+        loginPrimaryCheck.checked = bootStatus.login_primary_display === true
         autostartCheck.checked = bootStatus.enabled === true || backend.isAutostartEnabled()
         settingsLoading = false
     }
@@ -167,6 +169,44 @@ Item {
                     StartupHelp { helpText: "Makes Monitorize streaming available at the login screen.\nAfter signing in, reconnect to the same Moonlight PC. Desktop startup is included." }
                     Item { Layout.fillWidth: true }
                 }
+                RowLayout {
+                    visible: page.bootOptionsExpanded
+                    spacing: 8
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 48
+                    CustomCheckBox {
+                        id: loginPrimaryCheck
+                        objectName: "loginPrimaryDisplayCheck"
+                        text: "Do not create virtual displays on the login screen"
+                        keepCheckedBlue: true
+                        Layout.fillWidth: true
+                        enabled: page.bootStatus.enabled === true && !backend.remoteLoginSetupBusy
+                        opacity: enabled ? 1.0 : 0.45
+                        onClicked: backend.configureLoginPrimaryDisplay(checked)
+                    }
+                    StartupHelp { helpText: "Streams GNOME's existing primary display, where the login form appears.\nYour desktop display settings still apply after login. Changes apply after reboot." }
+                }
+                RowLayout {
+                    visible: page.bootOptionsExpanded
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 48
+                    Text { text: "Remove virtual display after disconnect"; color: theme.textPrimary; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    SpinBox {
+                        id: displayTimeout
+                        objectName: "displayIdleTimeoutSeconds"
+                        from: 1; to: 600; value: 20; editable: true
+                        enabled: page.bootStatus.enabled === true && !backend.remoteLoginSetupBusy
+                    }
+                    Text { text: "seconds"; color: theme.textSecondary }
+                    Button {
+                        id: saveDisplayTimeout
+                        objectName: "saveDisplayIdleTimeout"
+                        text: backend.remoteLoginSetupBusy ? "Saving…" : "Save"
+                        enabled: page.bootStatus.enabled === true && !backend.remoteLoginSetupBusy && displayTimeout.value !== (page.bootStatus.display_idle_timeout_seconds || 20)
+                        onClicked: backend.configureDisplayIdleTimeout(displayTimeout.value)
+                    }
+                    StartupHelp { helpText: "Keep the remote-login display for this many seconds after the last client disconnects. Reconnecting cancels removal.\nA retained login-screen display uses the same timeout after login. Saved changes apply to future idle periods." }
+                }
                 Text {
                     visible: page.bootOptionsExpanded && (!page.bootStatus.available || (!page.bootStatus.supported && !page.bootStatus.enabled))
                     text: page.bootStatus.message || ""
@@ -204,13 +244,13 @@ Item {
                         ? (page.vkmsAuthorization.repair_required ? page.vkmsAuthorization.message : page.vkmsAuthorization.unattended_enabled ? "Enabled for your user. Display creation does not request a password." : "Authorize your user once for virtual display creation without recurring password prompts.")
                         : (page.vkmsAuthorization.message || "Install or upgrade monitorize-vkms first.")
                     symbol: "key-slash"
-                    actionText: page.vkmsChecking ? "Checking…" : !page.vkmsAuthorization.success ? "Retry" : page.vkmsAuthorization.repair_required ? "Reauthorize" : page.vkmsAuthorization.unattended_enabled ? "Disable" : "Enable"
+                    actionText: page.vkmsChecking ? "Checking…" : !page.vkmsAuthorization.success ? (page.vkmsAuthorization.host_update_required ? "Check again" : "Retry") : page.vkmsAuthorization.repair_required ? "Reauthorize" : page.vkmsAuthorization.unattended_enabled ? "Disable" : "Enable"
                     actionEnabled: !page.vkmsChecking && !backend.isStreaming && !backend.sessionBusy && !backend.systemSetupRunning
                     Layout.fillWidth: true
                     onClicked: {
                         page.vkmsAuthorizationMessage = ""
                         if (!page.vkmsAuthorization.success) page.refreshAuthorization()
-                        else backend.setVkmsUnattended(!page.vkmsAuthorization.unattended_enabled)
+                        else backend.setVkmsUnattended(page.vkmsAuthorization.repair_required || !page.vkmsAuthorization.unattended_enabled)
                     }
                 }
                 SettingsActionRow {

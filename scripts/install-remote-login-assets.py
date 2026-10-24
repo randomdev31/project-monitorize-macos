@@ -15,6 +15,9 @@ FILES={ENGINE,'usr/libexec/monitorize/monitorize-system-setup',
        'usr/lib/firewalld/services/monitorize.xml','etc/ufw/applications.d/monitorize',
        'usr/libexec/monitorize-vkms/monitorize-vkms-helper',
        'usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service',
+       'usr/libexec/monitorize-vkms/monitorize-vkms-authorization',
+       'usr/share/polkit-1/actions/io.github.vinnavannewton.monitorize-vkms.policy',
+       'usr/share/dbus-1/interfaces/io.github.vinnavannewton.MonitorizeVkms1.xml',
        'usr/libexec/monitorize/remote-login/entry.py',
        'usr/share/monitorize/remote-login/apps.json',
        'usr/share/dbus-1/system.d/io.github.vinnavannewton.MonitorizeRemoteLogin1.conf',
@@ -45,13 +48,17 @@ def validate_bundle(stage):
     """Fail before changing the host if the prepared bundle is incomplete."""
     stage=Path(stage)
     required=(FILES-{'usr/libexec/monitorize-vkms/monitorize-vkms-helper',
-                     'usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service'})|{'usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py',
+                     'usr/libexec/monitorize-vkms/monitorize-vkms-dbus-service',
+                     'usr/libexec/monitorize-vkms/monitorize-vkms-authorization',
+                     'usr/share/polkit-1/actions/io.github.vinnavannewton.monitorize-vkms.policy',
+                     'usr/share/dbus-1/interfaces/io.github.vinnavannewton.MonitorizeVkms1.xml'})|{'usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/greeter_display.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/display_managers.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/wayland_greeter.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/session_context.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/gdm_context.py',
+                   'usr/lib/monitorize-remote-login/monitorize/remote_login/login_primary.py',
                    'usr/share/monitorize/sunshine/assets/web/index.html'}
     for relative in required:
         path=stage/relative

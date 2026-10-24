@@ -26,6 +26,7 @@ class ControlServer:
             except OSError:break
             with peer:
                 peer.settimeout(18)
+                operation='authentication'
                 try:
                     pid,uid,_=struct.unpack('3i',peer.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
                     child=self.process()
@@ -43,10 +44,14 @@ class ControlServer:
                         not isinstance(values.get('token'),str) or not hmac.compare_digest(values['token'],self.token)):
                         raise ValueError('Invalid control authentication.')
                     with self.lock:
+                        operation=values.get('operation') if values.get('operation') in ('prepare','stream_started','stream_ready','stream_stopped','release','abort') else 'invalid operation'
                         result=self.request(values)
                     reply={'version':1,'ok':True,**result}
-                except Exception:
-                    reply={'version':1,'ok':False,'error':'Remote display operation failed; inspect the runner journal.'}
+                except Exception as error:
+                    # Never log the request, token, or arbitrary exception text.
+                    print('Remote display control failed during '+operation+': '+type(error).__name__+
+                          '. Inspect journalctl -u monitorize-remote-login.service and the engine unit journal.',flush=True)
+                    reply={'version':1,'ok':False,'error':'Remote display operation failed. Inspect journalctl -u monitorize-remote-login.service and the engine unit journal, then retry.'}
                 try:peer.sendall(json.dumps(reply).encode()+b'\n')
                 except OSError:pass
     def close(self):

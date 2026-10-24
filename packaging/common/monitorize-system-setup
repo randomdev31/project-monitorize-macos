@@ -80,13 +80,16 @@ def main():
     parser.add_argument("--input", action="store_true", help="grant the authorizing user uinput access")
     parser.add_argument("--firewall", action="store_true", help="allow Monitorize through an active firewall")
     parser.add_argument('--unattended-vkms', action='store_true')
-    parser.add_argument('--remote-login', choices=('enable','disable','remove','fallback'))
+    parser.add_argument('--remote-login', choices=('enable','disable','remove','fallback','primary-on','primary-off','timeout'))
+    parser.add_argument('--display-idle-timeout', type=int, choices=range(1,601), metavar='SECONDS')
     args = parser.parse_args()
     if not args.input and not args.firewall and not args.unattended_vkms and not args.remote_login:
         parser.error("select --input, --firewall and/or --unattended-vkms")
     if os.geteuid() != 0:
         raise RuntimeError("This helper requires root privileges.")
 
+    if (args.display_idle_timeout is not None) != (args.remote_login == 'timeout'):
+        parser.error('--display-idle-timeout requires --remote-login timeout')
     if args.remote_login:
         if args.input or args.firewall or args.unattended_vkms:
             parser.error("Remote-login enrollment is a separate setup operation.")
@@ -94,7 +97,9 @@ def main():
         entry = Path('/usr/libexec/monitorize/remote-login/entry.py')
         if not entry.is_file():
             raise RuntimeError('Install Monitorize remote-login service assets first.')
-        result = subprocess.run([sys.executable, '-I', str(entry), 'setup-' + args.remote_login],
+        command=[sys.executable, '-I', str(entry), 'setup-' + args.remote_login]
+        if args.remote_login=='timeout':command.append(str(args.display_idle_timeout))
+        result = subprocess.run(command,
                                 check=False, text=True, capture_output=True)
         print(result.stdout.strip())
         if result.returncode:

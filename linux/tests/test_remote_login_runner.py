@@ -68,7 +68,7 @@ class RunnerTests(unittest.TestCase):
         from monitorize.remote_login.runner import boot_main
         from monitorize.platform.remote_login_identity import identity_paths
         with tempfile.TemporaryDirectory() as d,ExitStack() as stack:
-            settings=SimpleNamespace(directory=Path(d),uid=1000)
+            settings=SimpleNamespace(directory=Path(d),uid=1000,display_idle_timeout_seconds=20)
             owner=Mock(running=False);owner.paths=identity_paths(Path(d));owner.process=None;owner.reap.return_value=None
             def start(*args,**kwargs):
                 owner.running=True;owner.process=Mock();owner.process.poll.return_value=None
@@ -98,7 +98,7 @@ class RunnerTests(unittest.TestCase):
         from contextlib import ExitStack
         from monitorize.remote_login.runner import desktop_main
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
-            settings=SimpleNamespace(directory=Path(directory),uid=1000,runtime=Path(directory))
+            settings=SimpleNamespace(directory=Path(directory),uid=1000,runtime=Path(directory),display_idle_timeout_seconds=20)
             owner=Mock(running=False);owner.process=None;owner.reap.return_value=0
             stop=Mock();stop.is_set.side_effect=[False,True]
             health=Mock()

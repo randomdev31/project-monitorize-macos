@@ -16,6 +16,24 @@ class Interface:
 
 
 class ParticipantTests(unittest.TestCase):
+    def test_physical_greeter_handoff_uses_root_reservation_without_connected_virtual_output(self):
+        interface=Interface();original=interface.GetStatus
+        interface.GetStatus=lambda **kwargs:json.dumps({**json.loads(original()),'output_name':'Virtual-0'})
+        finder=__import__('unittest.mock',fromlist=['Mock']).Mock(return_value='Virtual-9')
+        participant=Participant(factory=lambda:interface,output_finder=finder)
+        participant.poll();participant.poll()
+        self.assertIn(('prepare',{'capture':'kms','output_name':'Virtual-0'}),interface.calls)
+        self.assertEqual(len([c for c in interface.calls if isinstance(c,tuple)]),1)
+        finder.assert_not_called()
+
+    def test_desktop_descriptor_carries_saved_client_mode_policy(self):
+        interface=Interface();participant=Participant(factory=lambda:interface,output_finder=lambda:'Virtual-4')
+        participant.interface=interface;participant.factory=None;participant.stream_options={}
+        with patch('monitorize.config.settings.load_display_settings',return_value=dict(use_client_display_settings=True,resolution='2340x1600',fps='90')):
+            participant.poll()
+        values=[call[1] for call in interface.calls if isinstance(call,tuple)][0]
+        self.assertTrue(values['client_display_mode']);self.assertEqual(values['display_mode'],[2340,1600,90.0])
+
     def test_removed_output_can_restart_listener_from_reserved_service_identity(self):
         interface=Interface()
         original=interface.GetStatus
@@ -158,6 +176,18 @@ class ResumeOwnershipTests(unittest.TestCase):
         self.assertEqual(self.acquisitions,1)
         self.participant.start()
         self.assertTrue(self.units.desktop)
+
+    def test_authentication_failure_is_explicit_for_poll_and_restart(self):
+        from monitorize.remote_login.dbus_service import AuthenticationFailed
+        from monitorize.desktop.remote_login_runtime import RemoteLoginRuntime
+        from types import SimpleNamespace
+        with patch.object(self.participant,'_call',side_effect=AuthenticationFailed('invalid caller scope')):
+            for result in (self.participant.poll(),self.participant.start()):
+                self.assertEqual(result['state'],'authentication_error')
+                self.assertIn('authenticate',result['control_error'])
+                self.assertFalse(result['listening'])
+                self.assertFalse(RemoteLoginRuntime.active.fget(SimpleNamespace(enabled=True,status=result)))
+        self.assertEqual(self.participant.generation,'')
 
     def test_rejected_token_does_not_claim_service_is_offline(self):
         from monitorize.remote_login.dbus_service import Rejected

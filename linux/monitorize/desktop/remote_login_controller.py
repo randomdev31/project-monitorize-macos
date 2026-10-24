@@ -26,7 +26,7 @@ After=graphical-session-pre.target
 [Service]
 Type=simple
 Slice=app.slice
-ExecStart={_quote(python)} -m monitorize --start-in-tray
+ExecStart={_quote(python)} -m monitorize.desktop.controller_launcher
 Environment={_quote('PYTHONPATH='+str(pythonpath))}
 Restart=on-failure
 RestartSec=3

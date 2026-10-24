@@ -41,7 +41,17 @@ class DescriptorStore:
             values.update(desktop_context(environment))
         # Adopter rechecks active session, generation and DRM identity under its lock.
         adopted=self.adopter(caller['uid'],caller['session'])
-        if adopted.get('connector')!=expected:raise RuntimeError('Boot output changed during adoption.')
+        # Physical greeter capture never activates the reserved VKMS connector.
+        # Virtual-0 is a listener-only placeholder until authenticated prepare
+        # resolves the exact DRM target; it must never be treated as a live output.
+        pending=(expected=='Virtual-0' and adopted.get('protected') is True
+            and adopted.get('owner_kind')=='remote-login' and adopted.get('schema_version')==2
+            and type(adopted.get('uid')) is int and adopted['uid']==caller['uid']
+            and adopted.get('phase')=='desktop' and adopted.get('session')==caller['session']
+            and adopted.get('state') in ('reserved','pending')
+            and not any(key in adopted for key in ('connector','card','connector_id')))
+        if adopted.get('connector')!=expected and not pending:
+            raise RuntimeError('Boot output changed during adoption.')
         self._directory(self.root,0o755)
         directory=self.root/str(self.settings.uid)
         self._directory(directory,0o750,self.settings.gid)

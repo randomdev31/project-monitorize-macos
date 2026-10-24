@@ -43,5 +43,28 @@ class IdleTests(unittest.TestCase):
  def test_carried_output_cleanup_is_not_a_client_disconnect(self):
   self.display.deadline=20
   self.assertEqual(self.display.state,'desktop_listening')
+
+ def test_preparation_failure_health_is_not_hidden_by_a_listening_engine(self):
+  self.prepare.side_effect=RuntimeError('failed')
+  with self.assertRaises(RuntimeError):self.event('prepare')
+  health=self.display.health(listening=True)
+  self.assertTrue(health['listening'])
+  self.assertFalse(health['capture_ready'])
+  self.assertIn('preparation failed',health['startup_error'])
+  self.prepare.side_effect=None;self.event('prepare');self.event('stream_ready')
+  health=self.display.health(listening=True)
+  self.assertTrue(health['capture_ready'])
+  self.assertEqual(health['startup_error'],'')
   self.event('prepare');self.event('stream_started');self.event('stream_stopped')
   self.assertEqual(self.display.state,'disconnect_grace')
+
+ def test_prepare_failure_is_visible_until_a_successful_retry(self):
+  self.prepare.side_effect=RuntimeError('private details')
+  with self.assertRaises(RuntimeError):self.event('prepare')
+  self.assertIn('display preparation failed',self.display.error.lower())
+  self.assertNotIn('private details',self.display.error)
+  self.assertEqual(self.display.state,'error')
+  self.prepare.side_effect=None
+  self.event('prepare')
+  self.assertEqual(self.display.error,'')
+  self.assertEqual(self.display.state,'desktop_listening')

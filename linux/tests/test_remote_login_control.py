@@ -9,6 +9,27 @@ import unittest
 from monitorize.remote_login.control import ControlServer
 
 class ControlTests(unittest.TestCase):
+ def test_failed_operation_logs_context_without_disclosing_private_exception(self):
+  import contextlib,io
+  with tempfile.TemporaryDirectory() as directory:
+   path=Path(directory)/'control.sock'
+   process=SimpleNamespace(pid=os.getpid(),poll=lambda:None)
+   def fail(message):raise RuntimeError('private-token-fixture')
+   output=io.StringIO()
+   with contextlib.redirect_stdout(output):
+    server=ControlServer(path,'secret',lambda:process,fail,threading.RLock())
+    try:
+     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as client:
+      client.settimeout(2);client.connect(str(path))
+      client.sendall(json.dumps(dict(version=1,instance=1,token='secret',operation='prepare')).encode()+b'\n')
+      reply=json.loads(client.recv(4096))
+    finally:server.close()
+   self.assertFalse(reply['ok'])
+   self.assertIn('monitorize-remote-login.service',reply['error'])
+   self.assertIn('prepare',output.getvalue())
+   self.assertIn('RuntimeError',output.getvalue())
+   self.assertNotIn('private-token-fixture',output.getvalue()+str(reply))
+
  def test_peer_token_framing_and_close(self):
   with tempfile.TemporaryDirectory() as directory:
    path=Path(directory)/'control.sock';seen=[]

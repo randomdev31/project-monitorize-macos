@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore
 import dbus
 import dbus.service
+from .logind import CallerAuthenticationError
 
 NAME='io.github.vinnavannewton.MonitorizeRemoteLogin1'
 PATH='/io/github/vinnavannewton/MonitorizeRemoteLogin1'
@@ -16,6 +17,10 @@ INTERFACE=NAME
 
 class Rejected(dbus.DBusException):
     _dbus_error_name=NAME+'.Rejected'
+
+
+class AuthenticationFailed(Rejected):
+    _dbus_error_name=NAME+'.AuthenticationFailed'
 
 
 class Unavailable(dbus.DBusException):
@@ -53,8 +58,11 @@ class ExportedService(dbus.service.Object):
 
     def _invoke(self,method,*args):
         try:return json.dumps(method(*args),separators=(',',':'))
+        except CallerAuthenticationError:raise AuthenticationFailed('Caller cannot be verified as the enrolled active graphical session. Launch Monitorize through its desktop controller service.') from None
         except PermissionError:raise Rejected('Caller/session or ownership token is not authorized.') from None
-        except Exception:raise Unavailable('Remote-login operation could not complete; inspect service status.') from None
+        except Exception as failure:
+            print('Remote-login '+method.__name__+' failed: '+type(failure).__name__+': '+str(failure)[:512],flush=True)
+            raise Unavailable('Remote-login operation could not complete; inspect service status.') from None
 
     @dbus.service.method(INTERFACE,in_signature='',out_signature='s')
     def GetStatus(self):return self._invoke(self.core.status)
@@ -90,7 +98,13 @@ class ExportedService(dbus.service.Object):
         def work():
             try:
                 value=json.dumps(method(*args),separators=(',',':'));callback=reply
-            except PermissionError:
+            except CallerAuthenticationError:
+                value=AuthenticationFailed('Caller cannot be verified as the enrolled active graphical session. Launch Monitorize through its desktop controller service.');callback=error
+            except PermissionError as failure:
+                reason=('desktop reservation was not adopted before engine startup'
+                        if str(failure)=='Adopt the desktop reservation before starting its engine.'
+                        else 'caller, session or display ownership validation failed')
+                print('Remote display operation rejected: '+reason,flush=True)
                 value=Rejected('Caller/session or engine ownership is not authorized.');callback=error
             except Exception as failure:
                 # Fixed root operations contain no client password/token in errors.
@@ -109,6 +123,10 @@ class ExportedService(dbus.service.Object):
         self._async(self.core.engine_display,(str(sender),str(generation),str(operation)),reply,error)
 
 
+
+    @dbus.service.method(INTERFACE,in_signature='ssiidb',out_signature='s',sender_keyword='sender',async_callbacks=('reply','error'))
+    def EngineDisplayMode(self,generation,operation,width,height,fps,capture_idle,sender=None,reply=None,error=None):
+        self._async(self.core.engine_display,(str(sender),str(generation),str(operation),[int(width),int(height),float(fps)],bool(capture_idle)),reply,error)
 
     @dbus.service.method(INTERFACE,in_signature='',out_signature='s',sender_keyword='sender',async_callbacks=('reply','error'))
     def RemoveDisplay(self,sender=None,reply=None,error=None):
