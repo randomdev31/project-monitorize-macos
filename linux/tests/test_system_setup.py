@@ -17,11 +17,20 @@ class SystemSetupTest(unittest.TestCase):
         from unittest.mock import Mock
         namespace=runpy.run_path(str(ROOT/'packaging/common/monitorize-system-setup'))
         function=namespace['enable_firewall'];glob=function.__globals__
-        run=Mock(side_effect=['ssh', '', 'ssh monitorize', '', ''])
-        with patch.dict(glob,command_path=lambda *args:'/usr/bin/firewall-cmd',run=run),patch.object(glob['subprocess'],'run',return_value=subprocess.CompletedProcess([],0,'running','')):
+        commands=[]
+        profiles=['ssh','ssh monitorize']
+        def execute(command):
+            commands.append(command)
+            if '--get-services' in command:return profiles.pop(0)
+            if '--get-active-zones' in command:return 'home\n  interfaces: wlan0'
+            if '--query-service=monitorize' in command:return 'yes'
+            return ''
+        with patch.dict(glob,command_path=lambda *args:'/usr/bin/firewall-cmd',run=execute),patch.object(glob['subprocess'],'run',return_value=subprocess.CompletedProcess([],0,'running','')):
             self.assertIn('allows Monitorize',function())
-        self.assertEqual(run.call_args_list[1].args[0],['/usr/bin/firewall-cmd','--reload'])
-        self.assertEqual(run.call_args_list[3].args[0],['/usr/bin/firewall-cmd','--permanent','--add-service=monitorize'])
+        reload_index=commands.index(['/usr/bin/firewall-cmd','--reload'])
+        add_index=next(i for i,c in enumerate(commands) if '--add-service=monitorize' in c)
+        self.assertLess(reload_index,add_index)
+        self.assertEqual(sum('--reload' in c for c in commands),1)
 
     def test_missing_firewall_profile_has_actionable_error_without_opening_ports(self):
         from unittest.mock import Mock

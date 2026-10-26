@@ -7,6 +7,7 @@ import json
 import os
 import pwd
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -25,20 +26,45 @@ def vkms_authorization_command(enabled):
     return [pkexec, str(VKMS_AUTHORIZATION_HELPER), 'enable' if enabled else 'disable'], None
 
 
-def _input_ready() -> bool:
+def _input_status() -> dict[str, object]:
+    configured = False
+    current_member = False
     try:
-        group = grp.getgrnam("monitorize-input")
-        username = pwd.getpwuid(os.getuid()).pw_name
-        return os.getgid() == group.gr_gid or username in group.gr_mem
+        group = grp.getgrnam('monitorize-input')
+        user = pwd.getpwuid(os.getuid())
+        current_member = group.gr_gid in {os.getgid(), *os.getgroups()}
+        configured = current_member or getattr(user, 'pw_gid', None) == group.gr_gid or user.pw_name in group.gr_mem
     except (KeyError, OSError):
-        return False
+        pass
+    try:
+        ready = stat.S_ISCHR(os.stat('/dev/uinput').st_mode) and os.access('/dev/uinput', os.R_OK | os.W_OK)
+        if ready:
+            descriptor = os.open('/dev/uinput', os.O_WRONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+            os.close(descriptor)
+    except OSError:
+        ready = False
+    logout_required = configured and not current_member and not ready
+    if ready:
+        message = 'Touch and input are ready in this session.'
+    elif logout_required:
+        message = 'Input permission is configured. Log out and back in to enable input in this session.'
+    elif configured:
+        message = 'This session has input permission, but /dev/uinput is unavailable. Run input setup again to check the module and device permissions.'
+    else:
+        message = 'Run input setup to configure access to /dev/uinput.'
+    return {'input_ready': ready, 'input_configured': configured,
+            'logout_required': logout_required, 'input_message': message}
+
+
+def _input_ready() -> bool:
+    return bool(_input_status()['input_ready'])
 
 
 def get_system_setup_status() -> dict[str, object]:
-    """Return availability and current input permission without escalating."""
+    """Separate saved enrollment, current session membership and device access."""
     return {
-        "available": HELPER.is_file() and os.access(HELPER, os.X_OK),
-        "input_ready": _input_ready(),
+        'available': HELPER.is_file() and os.access(HELPER, os.X_OK),
+        **_input_status(),
     }
 
 
@@ -83,17 +109,16 @@ def system_setup_command(enable_input: bool, enable_firewall: bool, enable_vkms=
 def parse_system_setup_result(returncode, stdout, stderr):
     """Apply the same response rules to synchronous and Qt process callers."""
     if returncode != 0:
-        detail = stderr.strip()
-        if not detail:
-            try:
-                failure = json.loads(stdout)
-                if isinstance(failure, dict) and failure.get('success') is False:
-                    detail = str(failure.get('message') or '')
-            except (TypeError, ValueError):
-                pass
-        detail = detail or "Authorization was cancelled or setup failed."
-        detail = authentication_error_message(detail) or detail
-        return {"success": False, "message": detail}
+        response = {}
+        try:
+            failure = json.loads(stdout)
+            if isinstance(failure, dict) and failure.get('success') is False:
+                response = failure
+        except (TypeError, ValueError):
+            pass
+        detail = str(response.get('message') or stderr.strip() or 'Authorization was cancelled or setup failed.')
+        response.update(success=False, message=authentication_error_message(detail) or detail)
+        return response
 
     try:
         response = json.loads(stdout)

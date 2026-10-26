@@ -9,6 +9,8 @@ Item {
     property bool statusSucceeded: false
     property string statusMessage: ""
     property bool firstRun: false
+    property bool logoutRequired: false
+    property var completedActions: ({})
     signal setupCompleted()
     signal cancellationRequested()
 
@@ -24,11 +26,27 @@ Item {
             if (!page.applying) return
             page.applying = false
             page.statusSucceeded = result["success"] === true
-            page.statusMessage = result["message"] || "System setup failed."
-            if (page.statusSucceeded && page.firstRun) {
-                backend.markSystemSetupDecided()
-                page.setupCompleted()
+            let completed = Object.assign({}, page.completedActions)
+            let actions = result["actions"] || ({})
+            for (let name in actions) {
+                if (actions[name]["success"] === true) completed[name] = actions[name]["message"] || "Completed"
             }
+            page.completedActions = completed
+            if (actions["input"] && actions["input"]["success"] === true) inputCheck.checked = false
+            if (actions["firewall"] && actions["firewall"]["success"] === true) firewallCheck.checked = false
+            if (actions["vkms"] && actions["vkms"]["success"] === true) unattendedVkmsCheck.checked = false
+            let status = backend.getSystemSetupStatus()
+            page.logoutRequired = status["logout_required"] === true
+            page.statusMessage = result["message"] || "System setup failed."
+            let summaries = []
+            for (let name in completed) {
+                if (page.statusMessage.indexOf(completed[name]) === -1) summaries.push(completed[name])
+            }
+            if (summaries.length) page.statusMessage = summaries.join("\n") + "\n" + page.statusMessage
+            if (page.logoutRequired && page.statusMessage.indexOf("Log out") === -1)
+                page.statusMessage += "\nLog out and back in to enable input in this session."
+            if (actions["input"] && actions["input"]["success"] === true && status["input_ready"] !== true && !page.logoutRequired)
+                page.statusMessage += "\n" + (status["input_message"] || "Input is not ready in this session.")
         }
     }
 
@@ -62,6 +80,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: options.implicitHeight + 32
+            enabled: !page.applying && !page.statusSucceeded
             color: theme.surface
             border.color: theme.border
             radius: theme.cardRadius
@@ -109,7 +128,7 @@ Item {
                 }
 
                 Text {
-                    text: "Opens only the Monitorize Sunshine streaming ports when firewalld or UFW is active."
+                    text: "Allows streaming and discovery through active firewalld network zones or UFW."
                     color: theme.cardTextMuted
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
@@ -121,7 +140,7 @@ Item {
 
         Text {
             visible: !setupAvailable
-            text: "System setup is available from the Monitorize RPM or DEB package."
+            text: "System setup requires a native Monitorize package (RPM, DEB or Arch)."
             color: theme.errorText
             font.pixelSize: 12
             wrapMode: Text.WordWrap
@@ -142,6 +161,7 @@ Item {
             spacing: 10
 
             CustomButton {
+                visible: !page.statusSucceeded
                 text: page.firstRun ? "Cancel" : "Back"
                 primary: false
                 enabled: !page.applying
@@ -152,11 +172,24 @@ Item {
             }
 
             CustomButton {
+                objectName: "systemSetupAuthorizeButton"
+                visible: !page.statusSucceeded
                 text: applying ? "Authorizing…" : "Authorize and finish setup"
                 enabled: setupAvailable && !applying && (inputCheck.checked || firewallCheck.checked || unattendedVkmsCheck.checked)
                 onClicked: {
                     applying = true
                     backend.startSystemSetup(inputCheck.checked, firewallCheck.checked, unattendedVkmsCheck.checked)
+                }
+            }
+            CustomButton {
+                objectName: "systemSetupDoneButton"
+                text: "Done"
+                visible: page.statusSucceeded
+                onClicked: {
+                    if (page.statusSucceeded && page.firstRun) {
+                        backend.markSystemSetupDecided()
+                        page.setupCompleted()
+                    } else page.StackView.view.pop()
                 }
             }
         }

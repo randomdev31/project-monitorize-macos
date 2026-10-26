@@ -6,6 +6,7 @@ import grp
 import json
 import os
 import pwd
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -18,8 +19,16 @@ def command_path(*candidates):
     return None
 
 
+def command_result(command):
+    try:
+        return subprocess.run(command, text=True, capture_output=True, check=False,
+                              timeout=20, env={**os.environ, 'LC_ALL': 'C'})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Could not complete {command[0]}: {exc}") from exc
+
+
 def run(command):
-    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    result = command_result(command)
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "command failed"
         raise RuntimeError(f"{' '.join(command[:2])}: {detail}")
@@ -36,43 +45,91 @@ def invoking_user():
         raise RuntimeError("The authorizing user no longer exists.") from exc
 
 
+def prepare_input_device():
+    """Refresh the packaged rule and verify the device; never broaden its mode."""
+    # The packaged static node may exist even when no uinput driver is loaded.
+    modprobe = command_path('/usr/sbin/modprobe', '/usr/bin/modprobe', '/sbin/modprobe')
+    if not modprobe:
+        raise RuntimeError('modprobe is not installed. Repair the Monitorize package dependencies.')
+    run([modprobe, 'uinput'])
+    udevadm = command_path('/usr/bin/udevadm', '/usr/sbin/udevadm', '/bin/udevadm')
+    if not udevadm:
+        raise RuntimeError('udevadm is not installed. Repair the Monitorize package dependencies.')
+    run([udevadm, 'control', '--reload-rules'])
+    run([udevadm, 'trigger', '--action=add', '--subsystem-match=misc', '--sysname-match=uinput'])
+    run([udevadm, 'settle', '--timeout=5'])
+    try:
+        node = Path('/dev/uinput').stat()
+        group = grp.getgrnam('monitorize-input')
+    except (OSError, KeyError) as exc:
+        raise RuntimeError('The uinput device or monitorize-input group is missing. Repair the Monitorize package installation.') from exc
+    if not stat.S_ISCHR(node.st_mode) or node.st_gid != group.gr_gid or node.st_mode & 0o060 != 0o060:
+        raise RuntimeError('The uinput device does not grant monitorize-input read/write access. Check for conflicting udev rules and repair the Monitorize package installation.')
+    try:
+        descriptor = os.open('/dev/uinput', os.O_WRONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+        os.close(descriptor)
+    except OSError as exc:
+        raise RuntimeError(f'The uinput driver is not usable: {exc}') from exc
+
+
 def enable_input(username):
     try:
         group = grp.getgrnam("monitorize-input")
         user = pwd.getpwnam(username)
     except KeyError as exc:
         raise RuntimeError("The monitorize-input group is not installed.") from exc
+    prepare_input_device()
     if user.pw_gid == group.gr_gid or username in group.gr_mem:
-        return False, "Touch and input access is already enabled."
+        return True, "Input permission is configured. Log out and back in if this session cannot use input yet."
     usermod = command_path("/usr/sbin/usermod", "/usr/bin/usermod")
     if not usermod:
         raise RuntimeError("usermod is not available.")
     run([usermod, "-aG", "monitorize-input", username])
-    return True, "Touch and input access enabled. Log out and back in to use it."
+    return True, "Input permission configured. Log out and back in to use it."
 
 
 def enable_firewall():
-    firewall_cmd = command_path("/usr/bin/firewall-cmd", "/usr/sbin/firewall-cmd")
+    firewall_cmd = command_path('/usr/bin/firewall-cmd', '/usr/sbin/firewall-cmd')
     if firewall_cmd:
-        state = subprocess.run([firewall_cmd, "--state"], text=True, capture_output=True, check=False)
+        state = command_result([firewall_cmd, '--state'])
+        if state.returncode not in (0, 252):
+            raise RuntimeError('Could not check firewalld status: ' + (state.stderr.strip() or state.stdout.strip() or 'unknown error'))
         if state.returncode == 0:
             if 'monitorize' not in run([firewall_cmd, '--permanent', '--get-services']).split():
                 # A source install can add the XML after firewalld was started.
                 run([firewall_cmd, '--reload'])
                 if 'monitorize' not in run([firewall_cmd, '--permanent', '--get-services']).split():
                     raise RuntimeError('Monitorize firewall profile is missing. Install packaging/fedora/monitorize.xml as /usr/lib/firewalld/services/monitorize.xml, reload firewalld, then retry setup.')
-            run([firewall_cmd, "--permanent", "--add-service=monitorize"])
-            run([firewall_cmd, "--reload"])
-            return "Firewalld now allows Monitorize."
+            active = run([firewall_cmd, '--get-active-zones'])
+            zones = list(dict.fromkeys(line.split()[0] for line in active.splitlines()
+                                      if line.strip() and not line[0].isspace()))
+            if not zones:
+                zones = run([firewall_cmd, '--get-default-zone']).split()
+            if not zones:
+                raise RuntimeError('Could not determine a firewalld zone for Monitorize.')
+            for zone in zones:
+                for scope in (['--permanent'], []):
+                    command = [firewall_cmd, *scope, '--zone=' + zone]
+                    run([*command, '--add-service=monitorize'])
+                    if run([*command, '--query-service=monitorize']).strip() != 'yes':
+                        raise RuntimeError('Could not verify the Monitorize firewall rule in zone ' + zone + '.')
+            return 'Firewalld now allows Monitorize in zones: ' + ', '.join(zones) + '.'
 
-    ufw = command_path("/usr/sbin/ufw", "/usr/bin/ufw")
+    ufw = command_path('/usr/sbin/ufw', '/usr/bin/ufw')
     if ufw:
-        state = subprocess.run([ufw, "status"], text=True, capture_output=True, check=False)
-        if "Status: active" in state.stdout:
-            run([ufw, "allow", "Monitorize"])
-            return "UFW now allows Monitorize."
-
-    return "No active supported firewall was detected; no firewall changes were needed."
+        state = command_result([ufw, 'status'])
+        if state.returncode:
+            raise RuntimeError('Could not check UFW status: ' + (state.stderr.strip() or state.stdout.strip() or 'unknown error'))
+        lines = state.stdout.splitlines()
+        if 'Status: active' in lines:
+            run([ufw, 'allow', 'Monitorize'])
+            rules = run([ufw, 'status'])
+            if not any(line.split() and line.split()[0] == 'Monitorize' and 'ALLOW' in line.split() for line in rules.splitlines()):
+                raise RuntimeError('Could not verify the Monitorize UFW rule.')
+            return 'UFW now allows Monitorize.'
+        if 'Status: inactive' not in lines:
+            raise RuntimeError('Could not recognize UFW status; no rules were changed.')
+    return 'No active supported firewall was detected; no firewall changes were needed.'
 
 
 def main():
@@ -114,24 +171,35 @@ def main():
     username = invoking_user()
     messages = []
     logout_required = False
+    actions = {}
+    action = None
     try:
         if args.unattended_vkms:
+            action = 'vkms'
             response = json.loads(run([sys.executable, '-I', str(host_authorization), 'enable']))
             if not response.get('success'):
                 raise RuntimeError(response.get('message') or 'Could not authorize VKMS displays.')
             messages.append(response['message'])
+            actions[action] = {'success': True, 'message': response['message']}
         if args.input:
+            action = 'input'
             input_changed, input_message = enable_input(username)
             messages.append(input_message)
             logout_required = input_changed
+            actions[action] = {'success': True, 'message': input_message}
         if args.firewall:
-            messages.append(enable_firewall())
+            action = 'firewall'
+            message = enable_firewall()
+            messages.append(message)
+            actions[action] = {'success': True, 'message': message}
     except Exception as exc:
+        if action:
+            actions[action] = {'success': False, 'message': str(exc)}
         detail = ' '.join(messages + [str(exc)])
-        print(json.dumps({'success': False, 'message': detail, 'logout_required': logout_required}))
+        print(json.dumps({'success': False, 'message': detail, 'logout_required': logout_required, 'actions': actions}))
         print(detail, file=sys.stderr)
         raise SystemExit(1)
-    print(json.dumps({"success": True, "message": " ".join(messages), "logout_required": logout_required}))
+    print(json.dumps({"success": True, "message": " ".join(messages), "logout_required": logout_required, "actions": actions}))
 
 
 
