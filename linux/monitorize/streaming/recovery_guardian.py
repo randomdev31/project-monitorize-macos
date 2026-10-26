@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 
-from monitorize.platform.session_layout import KdeLayout, LayoutTransaction, layout_supported, current_layout_backend
+from monitorize.platform.session_layout import KdeLayout, LayoutTransaction, layout_supported, current_layout_backend, guarded_holder_supported
 
 MAX_FRAME = 65536
 
@@ -76,7 +76,7 @@ class GuardianClient:
         if self.process and self.process.poll() is None:
             return
         if not layout_supported(self.desktop):
-            raise RuntimeError('Primary and virtual-only modes require a supported native KDE/Hyprland/GNOME Wayland session.')
+            raise RuntimeError('Display recovery is unavailable for the current display server.')
         Path(self.path).unlink(missing_ok=True)
         args = [sys.executable, '-m', __name__, 'serve', self.path, self.token, self.mode, str(os.getpid())]
         self.process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -205,7 +205,7 @@ class Guardian:
                 args = request['args']
                 if type(slot) is not int or slot not in (1, 2) or not isinstance(args, list) or len(args) != 6:
                     raise ValueError('Invalid display holder request.')
-                if not (args[4]=='kde' and args[5] in ('native','vkms') or args[4]=='gnome' and args[5]=='vkms'):
+                if not guarded_holder_supported(args[4], args[5]):
                     raise ValueError('Unsupported guarded display backend.')
                 async with self.lock:
                     if self.stopping or slot in self.reserved:

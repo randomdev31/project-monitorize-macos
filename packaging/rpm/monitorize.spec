@@ -96,6 +96,7 @@ Requires:       systemd-udev
 Requires:       which
 Requires:       xdg-desktop-portal
 Suggests:       monitorize-vkms >= 0.3.0
+Suggests:       xrandr
 Requires(post): kmod
 %{?sysusers_requires_compat}
 

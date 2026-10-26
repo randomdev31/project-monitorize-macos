@@ -15,6 +15,8 @@ Item {
     property var nativeResolutionOptions: ["1280x720 (16:9)", "1280x800 (16:10)", "1920x1080 (16:9)", "1920x1200 (16:10)", "2560x1440 (16:9)", "2560x1600 (16:10)", "3840x2160 (16:9)", "Custom..."]
     property var virtualDisplays: []
     property var displayBehaviorConfig: ({value: "extend", supported: false})
+    readonly property var displayBehaviorModes: displayBehaviorConfig.modes
+        || (displayBehaviorConfig.supported ? ["extend", "primary", "virtual_only"] : ["extend"])
     ListModel { id: displayModel }
 
     function displayRow(config) {
@@ -214,8 +216,7 @@ Item {
 
     Component.onCompleted: {
         displayBehaviorConfig = backend.loadDisplayBehavior()
-        displayBehavior.currentIndex = displayBehaviorConfig.supported
-            ? Math.max(0, ["extend", "primary", "virtual_only"].indexOf(displayBehaviorConfig.value)) : 0
+        displayBehavior.currentIndex = Math.max(0, displayBehaviorModes.indexOf(displayBehaviorConfig.value))
         backend.refreshVkmsHelperAvailability()
         let saved = backend.loadDisplaySettings()
         displayType.selectValue(saved["display_type"] || "Extend")
@@ -283,12 +284,14 @@ Item {
                     }
                     CustomComboBox {
                         id: displayBehavior
+                        objectName: "displayBehaviorSelector"
                         Layout.fillWidth: true
                         visible: displayType.currentText === "Extend" && !createOnly.checked
-                        model: page.displayBehaviorConfig.supported
-                            ? ["Extend", "Virtual display as primary", "Virtual displays only"]
-                            : ["Extend"]
-                        onActivated: backend.saveDisplayBehavior(["extend", "primary", "virtual_only"][currentIndex])
+                        model: page.displayBehaviorModes.map(function(mode) {
+                            return mode === "virtual_only" ? "Virtual displays only"
+                                : mode === "primary" ? "Virtual display as primary" : "Extend"
+                        })
+                        onActivated: backend.saveDisplayBehavior(page.displayBehaviorModes[currentIndex])
                     }
                     Text {
                         visible: page.vkmsSelected && !backend.vkmsHelperAvailable

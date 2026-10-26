@@ -139,6 +139,12 @@ def run_vkms_headless(
         print("[VKMS] Using host monitorize-vkms service", flush=True)
         print(f"[VKMS] Requesting display: {width}x{height}@{fps}", flush=True)
 
+        if desktop.lower() in ('hyprland', 'x11'):
+            vkms_client.require_managed_backend(desktop.lower())
+        if desktop.lower() == 'hyprland':
+            from monitorize.platform.hyprland_layout import HyprlandLayout
+            HyprlandLayout().require_vkms_lifecycle()
+
         options = {'display': VKMS_SLOTS[slot]}
         if os.environ.get('MONITORIZE_VKMS_UNATTENDED') == '1':
             options['unattended'] = True
@@ -176,13 +182,14 @@ def run_vkms_headless(
             "generation": generation[0],
             "card": result["card"],
         }
-        if desktop.lower() == "gnome" and os.environ.get(
+        gnome_wayland = desktop.lower() == 'gnome' and os.environ.get('XDG_SESSION_TYPE', '').lower() != 'x11'
+        if gnome_wayland and os.environ.get(
             "MONITORIZE_VKMS_CAPTURE", "pipewire_node" if os.path.isfile("/.flatpak-info") else "kms"
         ) == "pipewire_node":
             from monitorize.platform.gnome_monitor_capture import GnomeMonitorCapture
             capture = GnomeMonitorCapture()
             event.update(capture.start(output_name))
-        elif desktop.lower() == "gnome":
+        elif gnome_wayland:
             from monitorize.platform.gnome_virtual_monitor import display_config_interface
             state = display_config_interface().GetCurrentState()
             for logical in state[2]:

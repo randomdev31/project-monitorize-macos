@@ -8,6 +8,21 @@ from monitorize.platform import vkms_backend
 from monitorize.platform.monitorize_vkms_dbus import MonitorizeVkmsClient, MonitorizeVkmsError, VkmsCommandError
 
 class VkmsBackendTest(unittest.TestCase):
+    def test_managed_hyprland_and_x11_reject_old_host_before_creation(self):
+        for desktop in ('hyprland','x11'):
+            with self.subTest(desktop=desktop):
+                client=self.client()
+                client.require_managed_backend.side_effect=VkmsCommandError('Update host')
+                code,output=self.run_holder(client,desktop=desktop)
+                self.assertEqual(code,1)
+                client.create_display.assert_not_called()
+
+    def test_hyprland_holder_rejects_old_aquamarine_before_creation(self):
+        client=self.client()
+        with patch('monitorize.platform.hyprland_layout.HyprlandLayout.require_vkms_lifecycle',side_effect=RuntimeError('Aquamarine too old')):
+            code,output=self.run_holder(client,desktop='hyprland')
+        self.assertEqual(code,1);client.create_display.assert_not_called()
+
     def client(self, display="mon1", width=1920, height=1080):
         client = MagicMock(spec=MonitorizeVkmsClient)
         client.create_display.return_value = {"name": "Virtual-7", "card": "card4", "width": width,

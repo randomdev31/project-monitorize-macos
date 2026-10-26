@@ -983,16 +983,15 @@ class MonitorizeBackend(QObject):
 
     @pyqtSlot(result="QVariantMap")
     def loadDisplayBehavior(self):
-        from monitorize.platform.session_layout import layout_supported
+        from monitorize.platform.session_layout import layout_modes
+        modes = layout_modes(self.streaming.de)
         return {"value": self.configuration_state.draft['display_behavior'],
-                "supported": layout_supported(self.streaming.de)}
+                "supported": len(modes) > 1, "modes": list(modes)}
 
     @pyqtSlot(str, result=bool)
     def saveDisplayBehavior(self, value):
-        from monitorize.platform.session_layout import MODES, layout_supported
-        if self.applyingConfiguration or value not in MODES:
-            return False
-        if value != 'extend' and not layout_supported(self.streaming.de):
+        from monitorize.platform.session_layout import layout_modes
+        if self.applyingConfiguration or value not in layout_modes(self.streaming.de):
             return False
         self.configuration_state.draft["display_behavior"] = value
         self.configurationChanged.emit()

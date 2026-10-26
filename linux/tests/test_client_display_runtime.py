@@ -38,6 +38,22 @@ class ClientDisplayRuntimeTest(unittest.TestCase):
         req.update(changes)
         return req
 
+    def test_hyprland_vkms_requires_host_lifecycle_capability_before_listener(self):
+        from monitorize.platform.monitorize_vkms_dbus import VkmsProtocolError
+        self.runtime.stop()
+        with patch('monitorize.platform.monitorize_vkms_dbus.MonitorizeVkmsClient') as factory, patch('monitorize.desktop.client_display_runtime.start_sunshine') as launch:
+            factory.return_value.require_managed_backend.side_effect=VkmsProtocolError('Update host for Hyprland lifecycle')
+            self.assertFalse(self.runtime.start_slot(1,{'de':'hyprland','virtual_display_creator':'vkms'}))
+            launch.assert_not_called()
+
+    def test_generic_x11_requires_host_xrandr_capability_before_listener(self):
+        from monitorize.platform.monitorize_vkms_dbus import VkmsProtocolError
+        self.runtime.stop()
+        with patch('monitorize.platform.monitorize_vkms_dbus.MonitorizeVkmsClient') as factory, patch('monitorize.desktop.client_display_runtime.start_sunshine') as launch:
+            factory.return_value.require_managed_backend.side_effect=VkmsProtocolError('Update host for X11 lifecycle')
+            self.assertFalse(self.runtime.start_slot(1,{'de':'x11','virtual_display_creator':'vkms'}))
+            launch.assert_not_called()
+
     def test_kms_listener_reports_command_before_launch(self):
         from monitorize.desktop.client_display_runtime import ClientSlot
         message = 'KMS capture requires cap_sys_admin. Run: sudo setcap cap_sys_admin+p /test/sunshine'

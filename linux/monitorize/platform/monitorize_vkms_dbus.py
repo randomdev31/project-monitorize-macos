@@ -82,6 +82,14 @@ class MonitorizeVkmsClient:
         if bus is not None:
             bus.close()
 
+    def require_managed_backend(self, desktop):
+        capabilities = self.get_capabilities()
+        backends = capabilities.get('managed_layout_backends')
+        if not isinstance(backends, list) or desktop not in backends:
+            raise VkmsProtocolError(
+                f'Update monitorize-vkms and restart its host service for managed {desktop} displays. '
+                + ('Hyprland VKMS also requires Aquamarine 0.15.1 or newer.' if desktop == 'hyprland' else ''))
+
     def get_authorization_state(self):
         try:
             result = self._call('GetAuthorizationState', timeout=5)

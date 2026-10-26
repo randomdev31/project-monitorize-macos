@@ -12,6 +12,7 @@ from pathlib import Path
 import secrets
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -140,17 +141,22 @@ class ClientDisplayRuntime(QObject):
         creator = config.get('virtual_display_creator', 'native')
         if creator == 'vkms':
             from monitorize.platform.monitorize_vkms_dbus import MonitorizeVkmsClient, MonitorizeVkmsError
+            host = MonitorizeVkmsClient()
             try:
-                MonitorizeVkmsClient().require_unattended()
-            except MonitorizeVkmsError as exc:
+                host.require_unattended()
+                if config.get('de') in ('hyprland', 'x11'):
+                    host.require_managed_backend(config['de'])
+                if config.get('de') == 'hyprland':
+                    from monitorize.platform.hyprland_layout import HyprlandLayout
+                    HyprlandLayout().require_vkms_lifecycle()
+            except (MonitorizeVkmsError, RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
                 self.error = str(exc)
                 return False
+            finally:
+                host.close()
         de = str(config.get('de', '')).lower()
-        if os.path.isfile('/.flatpak-info') or de not in ('kde', 'gnome', 'hyprland', 'sway', 'niri', 'cinnamon', 'cosmic'):
+        if os.path.isfile('/.flatpak-info') or de not in ('kde', 'gnome', 'hyprland', 'sway', 'niri', 'cinnamon', 'cosmic', 'x11'):
             self.error = 'Client-controlled displays require a supported native desktop backend.'
-            return False
-        if creator == 'vkms' and de == 'hyprland':
-            self.error = 'Hyprland VKMS live removal is guarded; client-controlled lifecycle is unavailable.'
             return False
         if creator != 'vkms' and de not in ('kde', 'gnome', 'hyprland', 'sway'):
             self.error = 'This desktop requires the VKMS display backend.'
@@ -227,13 +233,16 @@ class ClientDisplayRuntime(QObject):
         return True
 
     def _validate_layout(self, config, instance=1):
-        from monitorize.platform.session_layout import MODES, layout_supported
+        from monitorize.platform.session_layout import layout_modes, guarded_holder_supported
         mode = config.get('display_behavior', 'extend')
-        if mode not in MODES or (mode != 'extend' and not layout_supported(config.get('de'))):
-            self.error = 'Primary and virtual-only modes require a supported native Wayland recovery backend.'
+        if mode not in layout_modes(config.get('de')):
+            self.error = 'This display behavior is unavailable for the current display server.'
             return False
         if mode!='extend' and config.get('de')=='gnome' and config.get('virtual_display_creator','native')!='vkms':
             self.error='GNOME guarded primary and virtual-only modes currently require VKMS.'
+            return False
+        if mode != 'extend' and not guarded_holder_supported(config.get('de'), config.get('virtual_display_creator', 'native')):
+            self.error = 'This display behavior requires the VKMS display backend.'
             return False
         if mode != 'extend' and not supports_control_protocol(instance, marker=b'MONITORIZE_LAYOUT_RECOVERY=1'):
             self.error = 'Rebuild Monitorize Sunshine with layout recovery protocol v1 before using this display behavior.'

@@ -144,7 +144,7 @@ def _x11_capture_output(requested):
     while True:
         try:
             result = subprocess.run(
-                ["xrandr", "--query"], capture_output=True, text=True, timeout=2,
+                ["xrandr", "--query", "--prop"], capture_output=True, text=True, timeout=2,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -154,21 +154,13 @@ def _x11_capture_output(requested):
                 "Could not query X11 displays: "
                 + (result.stderr.strip() or result.stdout.strip() or "xrandr failed")
             )
-        connected = []
-        for line in result.stdout.splitlines():
-            fields = line.split()
-            if (len(fields) > 2 and fields[1] == "connected"
-                    and any(re.fullmatch(r"\d+x\d+\+-?\d+\+-?\d+", field)
-                            for field in fields[2:])):
-                connected.append(fields[0])
-        if requested in connected:
-            return requested
-        aliases = [name for name in connected if name.startswith(requested + "-")
-                   and name[len(requested) + 1:].isdigit()]
-        if len(aliases) == 1:
-            return aliases[0]
-        if len(aliases) > 1:
-            raise ValueError(f"Several X11 displays match {requested}: {', '.join(aliases)}")
+        from monitorize.platform.xrandr_layout import parse_outputs, resolve_output
+        try:
+            return resolve_output(requested, parse_outputs(result.stdout))
+        except ValueError:
+            # A newly created output can still be arriving in Xorg. Retry the
+            # same exact identity, never another monitor or the full desktop.
+            pass
         if time.monotonic() >= deadline:
             raise ValueError(f"X11 display {requested} is not connected; refusing to capture another screen.")
         time.sleep(0.2)

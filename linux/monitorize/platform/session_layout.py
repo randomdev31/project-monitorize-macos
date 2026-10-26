@@ -21,10 +21,29 @@ def output_identity(output):
     return json.dumps([output['name'], output.get('type'), output.get('sizeMM')], sort_keys=True)
 
 
-def layout_supported(desktop):
-    return (desktop in ('kde','hyprland','gnome') and not os.path.isfile('/.flatpak-info')
+def layout_modes(desktop):
+    if os.path.isfile('/.flatpak-info'):
+        return ('extend',)
+    session = os.environ.get('XDG_SESSION_TYPE', '').lower()
+    if session == 'x11' and os.environ.get('DISPLAY') and shutil.which('xrandr'):
+        return ('extend', 'virtual_only')
+    if desktop == 'niri' and session == 'wayland' and os.environ.get('NIRI_SOCKET') and shutil.which('niri'):
+        return ('extend', 'virtual_only')
+    supported = (desktop in ('kde','hyprland','gnome')
             and os.environ.get('XDG_SESSION_TYPE', '').lower() == 'wayland'
             and (desktop=='gnome' or bool(shutil.which('hyprctl' if desktop=='hyprland' else 'kscreen-doctor'))))
+    return MODES if supported else ('extend',)
+
+
+def layout_supported(desktop):
+    return len(layout_modes(desktop)) > 1
+
+
+def guarded_holder_supported(desktop, creator):
+    if os.environ.get('XDG_SESSION_TYPE', '').lower() == 'x11':
+        return creator == 'vkms'
+    return (desktop in ('kde', 'hyprland') and creator in ('native', 'vkms')
+            or desktop in ('gnome', 'niri') and creator == 'vkms')
 
 
 class KdeLayout:
@@ -209,10 +228,17 @@ class LayoutTransaction:
 
 
 def current_layout_backend():
+    if os.environ.get('XDG_SESSION_TYPE', '').lower() == 'x11':
+        from .xrandr_layout import XrandrLayout
+        return XrandrLayout()
+    if 'niri' in os.environ.get('XDG_CURRENT_DESKTOP', '').lower() or os.environ.get('NIRI_SOCKET'):
+        from .niri_layout import NiriLayout
+        return NiriLayout()
     if 'gnome' in os.environ.get('XDG_CURRENT_DESKTOP','').lower().split(':'):
         from .gnome_layout import GnomeLayout
         return GnomeLayout()
-    if 'hyprland' in os.environ.get('XDG_CURRENT_DESKTOP','').lower():
+    if ('hyprland' in os.environ.get('XDG_CURRENT_DESKTOP','').lower()
+            or os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')):
         from .hyprland_layout import HyprlandLayout
         return HyprlandLayout()
     return KdeLayout()
