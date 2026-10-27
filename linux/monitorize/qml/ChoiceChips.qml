@@ -87,7 +87,7 @@ GridLayout {
             contentItem: Text {
                 id: chipText
                 text: chip.text
-                color: !chip.enabled ? theme.textMuted : (chip.selected ? "#ffffff" : theme.cardTextPrimary)
+                color: !chip.enabled ? theme.textMuted : (chip.selected ? theme.buttonText : theme.cardTextPrimary)
                 font.pixelSize: 12
                 font.weight: Font.DemiBold
                 horizontalAlignment: Text.AlignHCenter

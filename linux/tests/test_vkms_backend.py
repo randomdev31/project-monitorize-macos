@@ -8,6 +8,21 @@ from monitorize.platform import vkms_backend
 from monitorize.platform.monitorize_vkms_dbus import MonitorizeVkmsClient, MonitorizeVkmsError, VkmsCommandError
 
 class VkmsBackendTest(unittest.TestCase):
+    def test_managed_hyprland_and_x11_reject_old_host_before_creation(self):
+        for desktop in ('hyprland','x11'):
+            with self.subTest(desktop=desktop):
+                client=self.client()
+                client.require_managed_backend.side_effect=VkmsCommandError('Update host')
+                code,output=self.run_holder(client,desktop=desktop)
+                self.assertEqual(code,1)
+                client.create_display.assert_not_called()
+
+    def test_hyprland_holder_rejects_old_aquamarine_before_creation(self):
+        client=self.client()
+        with patch('monitorize.platform.hyprland_layout.HyprlandLayout.require_vkms_lifecycle',side_effect=RuntimeError('Aquamarine too old')):
+            code,output=self.run_holder(client,desktop='hyprland')
+        self.assertEqual(code,1);client.create_display.assert_not_called()
+
     def client(self, display="mon1", width=1920, height=1080):
         client = MagicMock(spec=MonitorizeVkmsClient)
         client.create_display.return_value = {"name": "Virtual-7", "card": "card4", "width": width,
@@ -136,3 +151,18 @@ class VkmsBackendTest(unittest.TestCase):
     def test_install_page(self):
         with patch("webbrowser.open", return_value=True):
             self.assertTrue(vkms_backend.open_monitorize_vkms_install_page())
+
+    def test_normal_start_recovers_disabled_reserved_slot_once(self):
+        client=self.client()
+        target=client.create_display.return_value
+        client.create_display.side_effect=[MonitorizeVkmsError('Boot remote-login output is reserved; use managed handoff'),target]
+        with patch.object(vkms_backend,'recover_disabled_boot_reservation',return_value=True) as recover:
+            code,_=self.run_holder(client)
+        self.assertEqual(code,0);recover.assert_called_once();self.assertEqual(client.create_display.call_count,2)
+
+    def test_enabled_boot_mode_is_not_recovered_by_normal_start(self):
+        from types import SimpleNamespace
+        with patch('monitorize.remote_login.settings.read_settings',return_value=SimpleNamespace(enabled=True,uid=1000)), \
+             patch.object(vkms_backend.subprocess,'run') as run:
+            self.assertFalse(vkms_backend.recover_disabled_boot_reservation())
+            run.assert_not_called()

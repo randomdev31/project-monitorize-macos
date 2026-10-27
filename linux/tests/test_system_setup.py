@@ -1,5 +1,6 @@
 import json
 import subprocess
+import runpy
 import unittest
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
@@ -12,6 +13,34 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class SystemSetupTest(unittest.TestCase):
+    def test_new_firewall_profile_is_reloaded_before_adding_service(self):
+        from unittest.mock import Mock
+        namespace=runpy.run_path(str(ROOT/'packaging/common/monitorize-system-setup'))
+        function=namespace['enable_firewall'];glob=function.__globals__
+        commands=[]
+        profiles=['ssh','ssh monitorize']
+        def execute(command):
+            commands.append(command)
+            if '--get-services' in command:return profiles.pop(0)
+            if '--get-active-zones' in command:return 'home\n  interfaces: wlan0'
+            if '--query-service=monitorize' in command:return 'yes'
+            return ''
+        with patch.dict(glob,command_path=lambda *args:'/usr/bin/firewall-cmd',run=execute),patch.object(glob['subprocess'],'run',return_value=subprocess.CompletedProcess([],0,'running','')):
+            self.assertIn('allows Monitorize',function())
+        reload_index=commands.index(['/usr/bin/firewall-cmd','--reload'])
+        add_index=next(i for i,c in enumerate(commands) if '--add-service=monitorize' in c)
+        self.assertLess(reload_index,add_index)
+        self.assertEqual(sum('--reload' in c for c in commands),1)
+
+    def test_missing_firewall_profile_has_actionable_error_without_opening_ports(self):
+        from unittest.mock import Mock
+        namespace=runpy.run_path(str(ROOT/'packaging/common/monitorize-system-setup'))
+        function=namespace['enable_firewall'];glob=function.__globals__
+        run=Mock(return_value='ssh')
+        with patch.dict(glob,command_path=lambda *args:'/usr/bin/firewall-cmd',run=run),patch.object(glob['subprocess'],'run',return_value=subprocess.CompletedProcess([],0,'running','')):
+            with self.assertRaisesRegex(RuntimeError,'monitorize.xml'):function()
+        self.assertFalse(any('--add-service=monitorize' in call.args[0] for call in run.call_args_list))
+
     def test_missing_agent_error_explains_how_to_restore_the_prompt(self):
         for detail in (
             "No authentication agent found.",

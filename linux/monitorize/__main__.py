@@ -2,15 +2,39 @@
 
 import sys
 
+from monitorize.config.settings import load_general_settings
+
+
+def _remote_controller_required():
+    import os
+    from monitorize.remote_login.settings import SETTINGS, read_settings
+    if not SETTINGS.exists():
+        return False
+    try:
+        settings = read_settings()
+        return settings.enabled and settings.uid == os.getuid()
+    except ValueError:
+        return False
+
+
+def _use_light_tray(argv):
+    if _remote_controller_required():
+        return False
+    tray_requested = '--tray-agent' in argv or '--start-in-tray' in argv
+    if not tray_requested or '--launch-preset' in argv:
+        return False
+    if '--restore-from-tray' in argv:
+        return True
+    return load_general_settings().get('streaming_backend', 'sunshine') == 'none'
+
 
 def main():
-    light_tray = (
-        "--tray-agent" in sys.argv
-        or ("--start-in-tray" in sys.argv and "--launch-preset" not in sys.argv)
-    )
+    light_tray = _use_light_tray(sys.argv)
     if light_tray:
         from monitorize.desktop.tray_agent import main as app_main
     else:
+        if '--tray-agent' in sys.argv and '--start-in-tray' not in sys.argv:
+            sys.argv.append('--start-in-tray')
         from monitorize.desktop.main_window import main as app_main
     app_main()
 

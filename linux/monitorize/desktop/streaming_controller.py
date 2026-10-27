@@ -144,7 +144,7 @@ def _x11_capture_output(requested):
     while True:
         try:
             result = subprocess.run(
-                ["xrandr", "--query"], capture_output=True, text=True, timeout=2,
+                ["xrandr", "--query", "--prop"], capture_output=True, text=True, timeout=2,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -154,21 +154,13 @@ def _x11_capture_output(requested):
                 "Could not query X11 displays: "
                 + (result.stderr.strip() or result.stdout.strip() or "xrandr failed")
             )
-        connected = []
-        for line in result.stdout.splitlines():
-            fields = line.split()
-            if (len(fields) > 2 and fields[1] == "connected"
-                    and any(re.fullmatch(r"\d+x\d+\+-?\d+\+-?\d+", field)
-                            for field in fields[2:])):
-                connected.append(fields[0])
-        if requested in connected:
-            return requested
-        aliases = [name for name in connected if name.startswith(requested + "-")
-                   and name[len(requested) + 1:].isdigit()]
-        if len(aliases) == 1:
-            return aliases[0]
-        if len(aliases) > 1:
-            raise ValueError(f"Several X11 displays match {requested}: {', '.join(aliases)}")
+        from monitorize.platform.xrandr_layout import parse_outputs, resolve_output
+        try:
+            return resolve_output(requested, parse_outputs(result.stdout))
+        except ValueError:
+            # A newly created output can still be arriving in Xorg. Retry the
+            # same exact identity, never another monitor or the full desktop.
+            pass
         if time.monotonic() >= deadline:
             raise ValueError(f"X11 display {requested} is not connected; refusing to capture another screen.")
         time.sleep(0.2)
@@ -232,6 +224,10 @@ class StreamingController(QObject):
         self._vkms_cleanup_timer.setInterval(250)
         self._vkms_cleanup_timer.timeout.connect(self._poll_vkms_cleanup)
 
+        from monitorize.desktop.mirror_retry import MirrorRetry
+        self.mirror_retry = MirrorRetry(lambda config: self.start(**config), self._set_status,
+                                       lambda: is_sunshine_running(1))
+        self.startFailed.connect(self._queue_mirror_failure)
         self.sunshine_watchdog_timer = QTimer(self)
         self.sunshine_watchdog_timer.setInterval(1000)
         self.sunshine_watchdog_timer.timeout.connect(self._check_sunshine_health)
@@ -293,7 +289,7 @@ class StreamingController(QObject):
             self._set_status("Session startup is already in progress — please wait")
             return
 
-        self.stop()
+        self.stop(preserve_mirror_retry=self.mirror_retry.restarting)
         if self._vkms_retiring:
             self._set_status("Previous VKMS displays are still stopping — please wait")
             return
@@ -323,6 +319,11 @@ class StreamingController(QObject):
         self.native_pen_touch = bool(native_pen_touch)
         self.mirror_output = str(mirror_output or "")
         self.audio_enabled = bool(enable_audio)
+        self.mirror_retry.arm(dict(res=res, fps=fps, display_type=self.display_type,
+            encoder=encoder, codec=codec, native_pen_touch=native_pen_touch, enable_audio=enable_audio,
+            options=options, gpu_id=gpu_id, mirror_output=mirror_output,
+            virtual_display_creator=virtual_display_creator, capture=capture),
+            self.streaming_backend == "sunshine")
         self.event_buffer = ""
         self.pending_options = options
         self._set_streaming(True)
@@ -344,6 +345,7 @@ class StreamingController(QObject):
                 self.startFailed.emit()
                 return
             self.mirror_output = target["id"]
+            self.mirror_retry.bind_output(self.mirror_output)
             native_width = int(target.get("native_width") or 0)
             native_height = int(target.get("native_height") or 0)
             if native_width <= 0 or native_height <= 0:
@@ -963,6 +965,23 @@ class StreamingController(QObject):
 
         QTimer.singleShot(0, start_second)
 
+    def _queue_mirror_failure(self):
+        retry = getattr(self, "mirror_retry", None)
+        if not retry or retry.intent is None:
+            return False
+        generation, message = self.generation, self.status
+        def recover():
+            if self.generation != generation or retry.intent is None:
+                return
+            self.stop(preserve_mirror_retry=True)
+            retry.failed(message)
+        QTimer.singleShot(0, recover)
+        return True
+
+    def _stop_after_primary_failure(self):
+        if not self._queue_mirror_failure():
+            QTimer.singleShot(0, self.stop)
+
     def _check_sunshine_health(self):
         if not self.streaming:
             self.sunshine_watchdog_timer.stop()
@@ -982,7 +1001,7 @@ class StreamingController(QObject):
                 app_log.write("SUNSHINE", message, level=logging.ERROR)
                 self.logAppended.emit("SUNSHINE", f"ERROR: {message}")
                 self._set_status(message)
-                QTimer.singleShot(0, self.stop)
+                self._stop_after_primary_failure()
                 return
             pending = self._pending_sunshine_ready.get(1)
             if pending:
@@ -994,7 +1013,7 @@ class StreamingController(QObject):
                     self._pending_sunshine_ready.pop(1, None)
                     self._set_status(self._capture_start_error(1, detail or "Sunshine startup timed out"))
                     self.startFailed.emit()
-                    QTimer.singleShot(0, self.stop)
+                    self._stop_after_primary_failure()
                     return
             target = self._x11_capture_targets.get(1)
             if target and get_sunshine_x11_capture_status(
@@ -1002,7 +1021,7 @@ class StreamingController(QObject):
             ) == "fallback":
                 self._set_status(f"Sunshine lost X11 display {target}; streaming stopped to protect your other screens.")
                 self.startFailed.emit()
-                QTimer.singleShot(0, self.stop)
+                self._stop_after_primary_failure()
                 return
             strict_error = get_sunshine_strict_selection_error(
                 1, self._sunshine_log_offsets[1]
@@ -1029,8 +1048,10 @@ class StreamingController(QObject):
                     self.codecMismatch.emit(toast_message)
                 else:
                     self.startFailed.emit()
-                QTimer.singleShot(0, self.stop)
+                self._stop_after_primary_failure()
                 return
+            if self.display_type == "Mirror" and self.primary_ready:
+                self.mirror_retry.healthy()
             if self.third_streaming:
                 alive, exit_code, error = check_sunshine_health(2)
                 if not alive:
@@ -1150,7 +1171,9 @@ class StreamingController(QObject):
         if self._should_track_gnome_virtual_layout():
             self.gnome_layout_change_timer.start()
 
-    def stop(self):
+    def stop(self, *, preserve_mirror_retry=False):
+        if not preserve_mirror_retry:
+            self.mirror_retry.cancel()
         self._pending_sunshine_ready.clear()
         if self._is_stopping:
             return

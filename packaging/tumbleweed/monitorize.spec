@@ -1,9 +1,9 @@
-%global sunshine_commit 8d043f2b929705a4f6bad30d1e7f700a2de607b6
+%global sunshine_commit bf7fd0a5e6b924eda5def42b682bd27c83004728
 %global cuda_version 12.9.1
 %global cuda_build 575.57.08
 %global cuda_sha256 0f6d806ddd87230d2adbe8a6006a9d20144fdbda9de2d6acc677daa5d036417a
-%global sunshine_ffmpeg_tag v2026.910.121303
-%global sunshine_ffmpeg_sha256 496d2bbb674d01e6033e31b9dfc15cbc9dc1494e882a4505f6ab1e03f75b385c
+%global sunshine_ffmpeg_tag v2026.1017.131201
+%global sunshine_ffmpeg_sha256 b2de5119cb0ab89cb6038acb75299b213f97a0c79d34557068add639511f8815
 %global cuda_libxml2_sha256 56637a1b406c68da030032da1191a063bf56df7fd4f99ec2ae4ec6431bf1ee4f
 %bcond_without cuda
 %global _firewalld_dir %{_prefix}/lib/firewalld
@@ -104,7 +104,8 @@ Requires:       python3-gobject
 Requires:       udev
 Requires:       which
 Requires:       xdg-desktop-portal
-Suggests:       monitorize-vkms
+Suggests:       monitorize-vkms >= 0.3.0
+Suggests:       xrandr
 Requires(pre):  sysuser-tools
 Requires(post): kmod
 Requires(post): udev
@@ -118,12 +119,10 @@ custom resolutions use the separately packaged helper suggested by this RPM.
 
 %prep
 %autosetup
+python3 packaging/common/check-client-display-protocol.py external/sunshine
 patch --batch --forward -d external/sunshine -p1 < packaging/sunshine-strict-selection.patch
 mkdir .ffmpeg-prepared
 tar -xzf %{SOURCE1} -C .ffmpeg-prepared --strip-components=1 --no-same-owner
-# Tumbleweed can ship a newer compatible Boost than Sunshine's exact request.
-sed -i 's/find_package(Boost CONFIG ${BOOST_VERSION} EXACT /find_package(Boost CONFIG ${BOOST_VERSION} /' \
-    external/sunshine/cmake/dependencies/Boost_Sunshine.cmake
 
 %build
 %if %{with cuda}
@@ -208,6 +207,7 @@ grep -q 'src/platform/linux/cuda.cu' sunshine-build/compile_commands.json
 %endif
 
 %install
+python3 packaging/remote-login/install-assets.py --destdir %{buildroot}
 install -d %{buildroot}%{python3_sitelib}
 cp -a linux/monitorize %{buildroot}%{python3_sitelib}/
 install -Dpm 0755 monitorize-kde-virtual-output \
@@ -277,6 +277,16 @@ assert QQuickWidget is not None
 assert main_window is not None
 PYTHON
 
+%pretrans -p /bin/sh
+if [ -f /usr/libexec/monitorize/remote-login/package-guard.py ]; then
+    /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py || exit 1
+fi
+
+%preun
+if [ "$1" = 0 ] && [ -f /usr/libexec/monitorize/remote-login/package-guard.py ]; then
+    /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py || exit 1
+fi
+
 %pre
 %sysusers_create_package %{name} %{SOURCE2}
 
@@ -298,6 +308,14 @@ PYTHON
 %{_bindir}/monitorize-kde-virtual-output
 %caps(cap_sys_admin,cap_sys_nice+p) %{_libexecdir}/monitorize/sunshine
 %{_libexecdir}/monitorize/monitorize-system-setup
+%{_libexecdir}/monitorize/remote-login/
+%{_prefix}/lib/monitorize-remote-login/
+%{_unitdir}/monitorize-remote-login.service
+%{_unitdir}/monitorize-remote-login-boot@.service
+%{_unitdir}/monitorize-remote-login-desktop@.service
+%{_unitdir}/monitorize-vkms-boot-display.service
+%{_datadir}/monitorize/remote-login/
+%{_datadir}/dbus-1/system.d/io.github.vinnavannewton.MonitorizeRemoteLogin1.conf
 %dir %{_datadir}/monitorize
 %dir %{_datadir}/monitorize/sunshine
 %{_datadir}/monitorize/sunshine/assets/

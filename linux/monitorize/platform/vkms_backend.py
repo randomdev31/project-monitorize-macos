@@ -6,6 +6,8 @@ import json
 import os
 import select
 import signal
+import shutil
+import subprocess
 import sys
 import webbrowser
 
@@ -46,6 +48,25 @@ def open_monitorize_vkms_install_page() -> bool:
         return webbrowser.open(MONITORIZE_VKMS_INSTALL_URL)
     except Exception:
         return False
+
+
+def recover_disabled_boot_reservation():
+    """Explicit normal Start may recover only this user's disabled boot mode."""
+    from monitorize.remote_login.settings import read_settings
+    try:settings=read_settings()
+    except ValueError:return False
+    if settings.enabled or settings.uid!=os.getuid():return False
+    command=shutil.which('monitorize-vkms')
+    if not command:return False
+    print('[VKMS] Releasing disabled boot reservation; administrator authorization may be requested.',flush=True)
+    result=subprocess.run([command,'remove','mon1','--json'],capture_output=True,text=True,timeout=120,check=False)
+    try:values=json.loads(result.stdout)
+    except ValueError:raise MonitorizeVkmsError('Could not confirm boot reservation release. Use Settings → Remove virtual display.') from None
+    if result.returncode or not values.get('success'):
+        details=[str(item['error']) for item in values.get('results',{}).values()
+                 if isinstance(item,dict) and item.get('error')]
+        raise MonitorizeVkmsError(' '.join([str(values.get('message') or 'Boot reservation release failed.'),*details]))
+    return True
 
 
 def run_vkms_headless(
@@ -118,7 +139,21 @@ def run_vkms_headless(
         print("[VKMS] Using host monitorize-vkms service", flush=True)
         print(f"[VKMS] Requesting display: {width}x{height}@{fps}", flush=True)
 
-        result = vkms_client.create_display(width, height, fps, display=VKMS_SLOTS[slot])
+        if desktop.lower() in ('hyprland', 'x11'):
+            vkms_client.require_managed_backend(desktop.lower())
+        if desktop.lower() == 'hyprland':
+            from monitorize.platform.hyprland_layout import HyprlandLayout
+            HyprlandLayout().require_vkms_lifecycle()
+
+        options = {'display': VKMS_SLOTS[slot]}
+        if os.environ.get('MONITORIZE_VKMS_UNATTENDED') == '1':
+            options['unattended'] = True
+        try:
+            result = vkms_client.create_display(width, height, fps, **options)
+        except MonitorizeVkmsError as error:
+            if ('boot remote-login output is reserved' not in str(error).lower()
+                    or VKMS_SLOTS[slot]!='mon1' or not recover_disabled_boot_reservation()):raise
+            result = vkms_client.create_display(width, height, fps, **options)
         if result["created"] is not True:
             raise MonitorizeVkmsError(f"{VKMS_SLOTS[slot]} already belongs to an existing holder. Stop its owning session first.")
         output_name = result["name"]
@@ -147,13 +182,14 @@ def run_vkms_headless(
             "generation": generation[0],
             "card": result["card"],
         }
-        if desktop.lower() == "gnome" and os.environ.get(
+        gnome_wayland = desktop.lower() == 'gnome' and os.environ.get('XDG_SESSION_TYPE', '').lower() != 'x11'
+        if gnome_wayland and os.environ.get(
             "MONITORIZE_VKMS_CAPTURE", "pipewire_node" if os.path.isfile("/.flatpak-info") else "kms"
         ) == "pipewire_node":
             from monitorize.platform.gnome_monitor_capture import GnomeMonitorCapture
             capture = GnomeMonitorCapture()
             event.update(capture.start(output_name))
-        elif desktop.lower() == "gnome":
+        elif gnome_wayland:
             from monitorize.platform.gnome_virtual_monitor import display_config_interface
             state = display_config_interface().GetCurrentState()
             for logical in state[2]:

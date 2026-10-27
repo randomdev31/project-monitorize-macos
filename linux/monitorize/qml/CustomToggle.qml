@@ -16,7 +16,7 @@ Switch {
         radius: height / 2
         color: !toggle.enabled ? theme.surfaceAlt : toggle.checked
             ? (toggle.hovered || toggle.down ? theme.buttonBackgroundHover : theme.buttonBackground)
-            : (toggle.hovered || toggle.down ? theme.surfaceAlt : theme.surface)
+            : theme.surfaceAlt
         border.color: !toggle.enabled ? theme.border : toggle.checked
             ? (toggle.hovered || toggle.down ? theme.buttonBackgroundHover : theme.buttonBackground)
             : (toggle.hovered || toggle.down ? theme.borderHover : theme.border)
@@ -29,7 +29,7 @@ Switch {
             x: toggle.checked ? parent.width - width - 3 : 3
             y: 3
             radius: width / 2
-            color: "#ffffff"
+            color: toggle.checked ? theme.buttonText : (theme.dark ? "#ffffff" : theme.textSecondary)
             Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
         }
     }
@@ -37,7 +37,7 @@ Switch {
     contentItem: Text {
         text: toggle.text
         font.pixelSize: 12
-        color: toggle.hovered ? theme.textSecondary : theme.textMuted
+        color: toggle.enabled ? theme.textSecondary : theme.textMuted
         leftPadding: toggle.indicator.width + toggle.spacing
         wrapMode: Text.WordWrap
         verticalAlignment: Text.AlignVCenter

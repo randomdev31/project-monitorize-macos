@@ -219,7 +219,7 @@ Virtual-1-1 connected 2340x1080+1920+0
 Virtual-1-2 connected
 """
         with patch("monitorize.desktop.streaming_controller.subprocess.run",
-                   return_value=Mock(returncode=0, stdout=listing, stderr="")):
+                   return_value=Mock(returncode=0, stdout=listing, stderr="")), patch('monitorize.platform.xrandr_layout.Path.glob', return_value=[]):
             self.assertEqual(_x11_capture_output("Virtual-1"), "Virtual-1-1")
             self.assertEqual(_x11_capture_output("eDP-1"), "eDP-1")
         with (patch("monitorize.desktop.streaming_controller.subprocess.run",

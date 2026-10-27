@@ -213,7 +213,6 @@ podman run "${run_options[@]}" \
         boost_archive="$(cache_source "https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-cmake.tar.xz" "${BOOST_SHA256}")"
         mkdir .boost-prepared
         tar -xJf "${boost_archive}" -C .boost-prepared --strip-components=1 --no-same-owner
-        sed -i "s/find_package(Boost CONFIG \${BOOST_VERSION} EXACT /find_package(Boost CONFIG \${BOOST_VERSION} /" external/sunshine/cmake/dependencies/Boost_Sunshine.cmake
 
         if [[ "${USE_PINNED_NODE}" == 1 ]]; then
             node_archive="$(cache_source "https://nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" "${NODE_SHA256}")"

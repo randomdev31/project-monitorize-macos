@@ -16,10 +16,13 @@ Rectangle {
     property string restoreTokenClearMessage: ""
     property string startFailureMessage: "Failed to start stream"
     readonly property bool showGlobalBack: stack.depth > 1 && !backend.isStreaming
+        && stack.currentItem !== null && stack.currentItem.objectName !== "bootWifiSetupPage"
     property string selectedPage: "DisplaySetupPage.qml"
     property string highlightedPage: "DisplaySetupPage.qml"
     property bool navHighlightFading: false
     property string pendingNavigation: ""
+    property string pendingConfigurationPage: ""
+    property string configurationNavigationError: ""
 
     function navigationGroup(page) {
         return (page === "DisplaySetupPage.qml" || page === "StreamingPage.qml")
@@ -54,19 +57,70 @@ Rectangle {
     }
 
     function navigate(page) {
-        if (page === selectedPage) {
+        if (page === selectedPage && stack.depth === 1) {
             pendingNavigation = ""
+            configureUnsavedDialog.close()
             return
         }
         if (stack.busy) {
             pendingNavigation = page
             return
         }
+        if (configureUnsavedDialog.visible) {
+            pendingConfigurationPage = page
+            return
+        }
         if (stack.currentItem && typeof stack.currentItem.commitAllPendingDisplaySettings === "function") {
             stack.currentItem.commitAllPendingDisplaySettings()
         }
+        if (selectedPage === "DisplaySetupPage.qml" && page !== selectedPage && backend.configurationDirty) {
+            pendingConfigurationPage = page
+            configurationNavigationError = ""
+            configureUnsavedDialog.open()
+            return
+        }
+        finishNavigation(page)
+    }
+
+    function finishNavigation(page) {
         selectedPage = page
-        stack.replace(page)
+        stack.replace(null, page)
+    }
+
+    function resolveConfigurationNavigation(save) {
+        if (backend.applyingConfiguration || !pendingConfigurationPage) return
+        configurationNavigationError = ""
+        if (save) {
+            if (!backend.saveConfigurationForLater()) return
+        } else {
+            // Old controls must not publish stale edits as they lose focus or close.
+            stack.currentItem.loading = true
+            if (!backend.discardConfigurationChanges()) {
+                stack.currentItem.loading = false
+                return
+            }
+        }
+        let destination = pendingConfigurationPage
+        stack.currentItem.loading = true
+        configureUnsavedDialog.close()
+        finishNavigation(destination)
+    }
+
+    function showConfigurationDraft() {
+        if (stack.busy) {
+            draftNavigationTimer.restart()
+            return
+        }
+        pendingNavigation = ""
+        selectedPage = "DisplaySetupPage.qml"
+        // The backend has replaced the draft; never flush stale controls over it.
+        stack.replace(null, "DisplaySetupPage.qml")
+    }
+
+    Timer {
+        id: draftNavigationTimer
+        interval: 80
+        onTriggered: showConfigurationDraft()
     }
 
     function removeStagnantVirtualDisplays() {
@@ -78,39 +132,130 @@ Rectangle {
         restoreTokenClearSucceeded = result["success"] === true
         restoreTokenClearMessage = result["message"] || "No restore tokens were found"
         restoreTokenClearToast.open()
+        restoreTokenClearToastTimer.restart()
+    }
+
+    Connections {
+        target: backend
+        function onConfigureDisplayRequestedForDraft() { showConfigurationDraft() }
+        function onConfigurationApplyFinished(success, message) {
+            if (configureUnsavedDialog.visible && !success) {
+                root.configurationNavigationError = message
+                return
+            }
+            root.stagnantCleanupSucceeded = success
+            root.stagnantCleanupMessage = message
+            stagnantCleanupToast.open()
+            stagnantCleanupToastTimer.restart()
+        }
+    }
+
+    Dialog {
+        id: configureUnsavedDialog
+        objectName: "configureUnsavedDialog"
+        title: "Save configuration changes?"
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        anchors.centerIn: parent
+        width: Math.min(560, root.width - 40)
+        padding: 20
+        background: Rectangle { color: theme.surface; border.color: theme.border; radius: theme.cardRadius }
+        header: Label {
+            text: configureUnsavedDialog.title
+            color: theme.headingText
+            font.pixelSize: 18
+            font.weight: Font.DemiBold
+            padding: 20
+            bottomPadding: 8
+            wrapMode: Text.WordWrap
+        }
+        contentItem: ColumnLayout {
+            Text {
+                text: "Saving keeps your current stream running. The changes will take effect when you next start or restart streaming."
+                color: theme.textPrimary
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            Text {
+                text: root.configurationNavigationError || backend.configurationValidationMessage
+                visible: text.length > 0
+                color: theme.errorText
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+        }
+        footer: DialogButtonBox {
+            padding: 20
+            topPadding: 8
+            background: Item {}
+            CustomButton {
+                objectName: "saveConfigurationChangesButton"
+                text: "Save changes"
+                enabled: backend.configurationValid && !backend.applyingConfiguration
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: root.resolveConfigurationNavigation(true)
+            }
+            CustomButton {
+                objectName: "discardConfigurationChangesButton"
+                text: "Discard changes"; primary: false
+                enabled: !backend.applyingConfiguration
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: root.resolveConfigurationNavigation(false)
+            }
+            CustomButton {
+                id: keepConfigurationEditingButton
+                objectName: "keepConfigurationEditingButton"
+                text: "Keep editing"; primary: false
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: configureUnsavedDialog.reject()
+            }
+        }
+        onOpened: keepConfigurationEditingButton.forceActiveFocus()
+        onClosed: {
+            root.pendingConfigurationPage = ""
+            root.configurationNavigationError = ""
+        }
     }
 
     Theme {
         id: theme
+        mode: backend ? backend.themeMode : "system"
+        systemDarkFallback: backend ? backend.systemThemeDark : false
+        useSystemAccent: backend ? backend.useSystemAccent : false
+        systemAccentColors: backend ? backend.systemAccentColors : ({})
     }
 
     color: theme.background
 
-    // --- Navigate between pages when streaming state changes ---
+    // Session updates must not override the page selected by the user.
     Connections {
         target: backend
         function onVirtualDisplayCleanupFinished(success, message) {
             root.stagnantCleanupSucceeded = success
             root.stagnantCleanupMessage = message
             stagnantCleanupToast.open()
-        }
-        function onIsStreamingChanged(streaming) {
-            if (streaming) {
-                if (root.selectedPage !== "StreamingPage.qml") root.navigate("StreamingPage.qml")
-            }
+            stagnantCleanupToastTimer.restart()
         }
         function onStreamingStartFailed() {
             if (vkmsReinstallPopup.visible) return
             root.startFailureMessage = "Failed to start stream"
             startFailedToast.open()
+            startFailedToastTimer.restart()
         }
         function onVkmsReinstallRequired() {
             startFailedToast.close()
             vkmsReinstallPopup.open()
         }
+        function onRemoteLoginSetupBlocked(message) {
+            root.startFailureMessage = message
+            startFailedToast.open()
+            startFailedToastTimer.restart()
+        }
         function onStreamingCodecMismatch(message) {
             root.startFailureMessage = message
             startFailedToast.open()
+            startFailedToastTimer.restart()
         }
     }
 
@@ -161,7 +306,7 @@ Rectangle {
         id: sidebar
         width: 106
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-        color: "#101e30"; border.color: theme.border
+        color: theme.logBoxBackground; border.color: theme.border
 
         Rectangle {
             id: navHighlight
@@ -229,8 +374,8 @@ Rectangle {
         parent: Overlay.overlay
         x: (parent.width - width) / 2
         y: parent.height - height - 28
-        width: 340
-        height: 48
+        width: Math.min(520, parent.width - 32)
+        height: Math.max(48, contentItem.implicitHeight + topPadding + bottomPadding)
         modal: false
         focus: false
         padding: 12
@@ -242,13 +387,14 @@ Rectangle {
         contentItem: Text {
             text: root.startFailureMessage
             color: "white"
+            wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
         onOpened: startFailedToastTimer.restart()
         Timer {
             id: startFailedToastTimer
-            interval: 2800
+            interval: 5000
             onTriggered: startFailedToast.close()
         }
     }
@@ -312,8 +458,8 @@ Rectangle {
         x: (parent.width - width) / 2
         y: parent.height - height - 28
         z: 1000
-        width: 330
-        height: 48
+        width: Math.min(520, parent.width - 32)
+        height: Math.max(48, contentItem.implicitHeight + topPadding + bottomPadding)
         modal: false
         focus: false
         padding: 12
@@ -325,13 +471,14 @@ Rectangle {
         contentItem: Text {
             text: root.stagnantCleanupMessage
             color: "white"
+            wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
         onOpened: stagnantCleanupToastTimer.restart()
         Timer {
             id: stagnantCleanupToastTimer
-            interval: 2800
+            interval: 5000
             onTriggered: stagnantCleanupToast.close()
         }
     }
@@ -342,8 +489,8 @@ Rectangle {
         x: (parent.width - width) / 2
         y: parent.height - height - 28
         z: 1000
-        width: 380
-        height: 48
+        width: Math.min(520, parent.width - 32)
+        height: Math.max(48, contentItem.implicitHeight + topPadding + bottomPadding)
         modal: false
         focus: false
         padding: 12
@@ -355,13 +502,14 @@ Rectangle {
         contentItem: Text {
             text: root.restoreTokenClearMessage
             color: "white"
+            wrapMode: Text.Wrap
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
         }
         onOpened: restoreTokenClearToastTimer.restart()
         Timer {
             id: restoreTokenClearToastTimer
-            interval: 3200
+            interval: 5000
             onTriggered: restoreTokenClearToast.close()
         }
     }

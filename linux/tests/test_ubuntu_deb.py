@@ -76,13 +76,15 @@ def test_ubuntu_deb_runtime_is_private_and_sets_sunshine_overrides() -> None:
 
 def test_deb_targets_match_current_sources() -> None:
     project_version = re.search(r'^version = "([^"]+)"$', (PROJECT_ROOT / "pyproject.toml").read_text(), re.MULTILINE).group(1)
+    source_pin = re.search(r"^SUNSHINE_COMMIT=([a-f0-9]{40})$",
+                           (PROJECT_ROOT / "packaging/arch/sources.conf").read_text(), re.MULTILINE).group(1)
     for target in ("ubuntu-24.04", "debian-trixie", "ubuntu-26.04"):
         package_dir = PROJECT_ROOT / "packaging/deb" / target
         changelog = (package_dir / "debian/changelog").read_text()
         sunshine_mk = (package_dir / "sunshine.mk").read_text()
         control = (package_dir / "debian/control").read_text()
         assert re.search(rf"^monitorize \({re.escape(project_version)}\)", changelog)
-        assert "SUNSHINE_COMMIT = 8d043f2b929705a4f6bad30d1e7f700a2de607b6" in sunshine_mk
+        assert f"SUNSHINE_COMMIT = {source_pin}" in sunshine_mk
         assert "qml6-module-qtquick-controls" in control
         assert "libcap2-bin" in control
 

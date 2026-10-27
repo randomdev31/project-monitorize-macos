@@ -809,6 +809,9 @@ if [[ "${INSTALL_MODE}" == "complete" ]]; then
             exit 1
         fi
     done
+    if ! python3 "${REPOSITORY_DIR}/packaging/common/check-client-display-protocol.py" "${SUNSHINE_SUBMODULE_DIR}"; then
+        exit 1
+    fi
     if ! grep -q "MONITORIZE_STRICT_SELECTION_FAILED" "${SUNSHINE_SUBMODULE_DIR}/src/video.cpp"; then
         echo "Applying Monitorize strict Sunshine encoder and codec selection patch…"
         if ! patch --batch --forward -d "${SUNSHINE_SUBMODULE_DIR}" -p1 < "${SUNSHINE_STRICT_SELECTION_PATCH}"; then

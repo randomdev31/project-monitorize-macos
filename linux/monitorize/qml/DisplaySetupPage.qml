@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 Item {
     id: page
+    objectName: "displaySetupPage"
     property string returnPageSource: "DisplaySetupPage.qml"
     property bool loading: true
     property var mirrorOutputs: []
@@ -13,6 +14,9 @@ Item {
     property string mirrorOutputId: ""
     property var nativeResolutionOptions: ["1280x720 (16:9)", "1280x800 (16:10)", "1920x1080 (16:9)", "1920x1200 (16:10)", "2560x1440 (16:9)", "2560x1600 (16:10)", "3840x2160 (16:9)", "Custom..."]
     property var virtualDisplays: []
+    property var displayBehaviorConfig: ({value: "extend", supported: false})
+    readonly property var displayBehaviorModes: displayBehaviorConfig.modes
+        || (displayBehaviorConfig.supported ? ["extend", "primary", "virtual_only"] : ["extend"])
     ListModel { id: displayModel }
 
     function displayRow(config) {
@@ -22,7 +26,8 @@ Item {
             customWidth: String(config.custom_w || ""),
             customHeight: String(config.custom_h || ""),
             refreshRate: String(config.fps || ""),
-            customRefresh: String(config.custom_fps || "")
+            customRefresh: String(config.custom_fps || ""),
+            clientRequestedSettings: !!config.use_client_display_settings
         }
     }
 
@@ -101,8 +106,8 @@ Item {
     Timer {
         id: mirrorPoll
         interval: 2000; repeat: true
-        running: !page.loading && backend.uiVisible && !backend.isStreaming
-            && !backend.sessionBusy && displayType.currentText === "Mirror"
+        running: !page.loading && backend.uiVisible && !backend.applyingConfiguration
+            && !backend.applyingConfiguration && displayType.currentText === "Mirror"
             && page.StackView.view && page.StackView.view.currentItem === page
         onRunningChanged: {
             if (running) Qt.callLater(function() { if (running) page.refreshMirrorOutputs() })
@@ -141,7 +146,13 @@ Item {
         let keys = ["resolution", "custom_w", "custom_h", "fps", "custom_fps"]
         for (let i = 0; i < keys.length; ++i) {
             let key = keys[i]
-            if (String(left[key] || "") !== String(right[key] || "")) return false
+            let leftValue = String(left[key] || "")
+            let rightValue = String(right[key] || "")
+            if (key === "resolution") {
+                leftValue = leftValue.split(" ")[0]
+                rightValue = rightValue.split(" ")[0]
+            }
+            if (leftValue !== rightValue) return false
         }
         return true
     }
@@ -210,6 +221,8 @@ Item {
     }
 
     Component.onCompleted: {
+        displayBehaviorConfig = backend.loadDisplayBehavior()
+        displayBehavior.currentIndex = Math.max(0, displayBehaviorModes.indexOf(displayBehaviorConfig.value))
         backend.refreshVkmsHelperAvailability()
         let saved = backend.loadDisplaySettings()
         displayType.selectValue(saved["display_type"] || "Extend")
@@ -233,18 +246,10 @@ Item {
         ColumnLayout {
             width: parent.width
             spacing: 14
-            Text { text: "Configuration"; color: theme.textPrimary; font.pixelSize: 28; font.weight: Font.Bold; Layout.bottomMargin: 6 }
-            Text {
-                visible: backend.isStreaming
-                text: "Stop the session to change display configuration."
-                color: theme.textMuted
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
             SectionCard {
                 title: "DISPLAY"; symbol: "display"
                 Layout.fillWidth: true
-                enabled: !backend.isStreaming
+                enabled: !backend.applyingConfiguration
                 GridLayout {
                     Layout.fillWidth: true
                     columns: 2; columnSpacing: 24; rowSpacing: 12
@@ -279,14 +284,30 @@ Item {
                         }
                     }
                     Text {
+                        text: "Display behavior"
+                        color: theme.textSecondary
+                        visible: displayType.currentText === "Extend" && !createOnly.checked
+                    }
+                    CustomComboBox {
+                        id: displayBehavior
+                        objectName: "displayBehaviorSelector"
+                        Layout.fillWidth: true
+                        visible: displayType.currentText === "Extend" && !createOnly.checked
+                        model: page.displayBehaviorModes.map(function(mode) {
+                            return mode === "virtual_only" ? "Virtual displays only"
+                                : mode === "primary" ? "Virtual display as primary" : "Extend"
+                        })
+                        onActivated: backend.saveDisplayBehavior(page.displayBehaviorModes[currentIndex])
+                    }
+                    Text {
                         visible: page.vkmsSelected && !backend.vkmsHelperAvailable
                         Layout.columnSpan: 2; Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        color: "#ff9a9a"
+                        color: theme.errorText
                         text: backend.vkmsAvailabilityMessage
                     }
                     CustomButton {
-                        visible: page.vkmsSelected && !backend.vkmsHelperAvailable
+                        visible: page.vkmsSelected && !backend.vkmsHelperAvailable && backend.vkmsInstallRequired
                         text: "Install monitorize-vkms"
                         onClicked: backend.openMonitorizeVkmsInstallPage()
                     }
@@ -315,16 +336,19 @@ Item {
                     delegate: VirtualDisplayModeCard {
                         id: modeCard
                         required property int index
+                        required property bool clientRequestedSettings
                         Layout.fillWidth: true
                         displayNumber: displayId
                         displayConfig: ({id: displayId, resolution: modeResolution,
                             custom_w: customWidth, custom_h: customHeight,
-                            fps: refreshRate, custom_fps: customRefresh})
+                            fps: refreshRate, custom_fps: customRefresh,
+                            use_client_display_settings: clientRequestedSettings})
+                        clientSettingsAvailable: !createOnly.checked && backend.sunshineAvailable
                         canRemove: displayId === 2
                         vkmsSelected: page.vkmsSelected
                         nativeResolutionOptions: page.nativeResolutionOptions
                         vkmsResolutionOptions: backend.vkmsResolutionOptions
-                        sunshineEnabled: !backend.isStreaming && !backend.sessionBusy
+                        sunshineEnabled: !backend.applyingConfiguration
                             && !createOnly.checked && backend.sunshineAvailable
                         onConfigurationChanged: function(configuration) {
                             let targetIndex = modeCard.displayNumber > 0 ? (modeCard.displayNumber - 1) : modeCard.index
@@ -336,7 +360,7 @@ Item {
                 AbstractButton {
                     id: addDisplayButton
                     visible: displayType.currentText === "Extend" && page.virtualDisplays.length < 2
-                    enabled: !backend.sessionBusy
+                    enabled: !backend.applyingConfiguration
                     Layout.fillWidth: true
                     implicitHeight: 54
                     onClicked: page.addDisplay()
@@ -349,7 +373,7 @@ Item {
                         anchors { left: parent.left; right: parent.right; margins: 14 }
                         spacing: 10
                         LineIcon { symbol: "plus"; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
-                        Text { text: "Add Display"; color: addDisplayButton.enabled ? "#94caff" : theme.textMuted; font.pixelSize: 14; font.weight: Font.DemiBold }
+                        Text { text: "Add Display"; color: addDisplayButton.enabled ? theme.headingText : theme.textMuted; font.pixelSize: 14; font.weight: Font.DemiBold }
                     }
                 }
             }
@@ -357,7 +381,7 @@ Item {
                 title: "SUNSHINE · MIRROR"; symbol: "streaming"
                 Layout.fillWidth: true
                 visible: displayType.currentText === "Mirror"
-                enabled: !backend.sessionBusy && !createOnly.checked && backend.sunshineAvailable
+                enabled: !backend.applyingConfiguration && !createOnly.checked && backend.sunshineAvailable
                 Loader {
                     Layout.fillWidth: true
                     active: displayType.currentText === "Mirror"
@@ -372,12 +396,12 @@ Item {
             SectionCard {
                 title: "ADVANCED"; symbol: "settings"; expanded: false
                 Layout.fillWidth: true
-                enabled: !backend.isStreaming
+                enabled: !backend.applyingConfiguration
                 RowLayout {
                     Layout.fillWidth: true
                     CustomCheckBox {
                         id: createOnly; text: "Create virtual display only"
-                        enabled: backend.sunshineAvailable; Layout.fillWidth: true
+                        enabled: backend.sunshineAvailable; Layout.fillWidth: false
                         onCheckedChanged: {
                             if (page.loading) return
                             if (checked && displayType.currentText === "Mirror") displayType.selectValue("Extend")
@@ -385,30 +409,55 @@ Item {
                             page.saveSettings()
                         }
                     }
-                    CustomButton {
-                        id: virtualOnlyHelpButton
-                        text: "?"; primary: false; implicitWidth: 32
-                        onClicked: virtualOnlyHint.open()
+                    StartupHelp {
+                        helpText: "Creates the virtual display without starting Monitorize’s streaming backend. Use your preferred streamer instead."
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    text: backend.applyingConfiguration ? backend.configurationMessage
+                        : backend.configurationDirty ? (backend.configurationValidationMessage || "Unsaved changes") : backend.configurationRestartRequired ? "Changes saved. Restart streaming to apply." : backend.configurationMessage
+                    color: theme.textSecondary
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                }
+                CustomButton {
+                    objectName: "applyConfigurationButton"
+                    text: backend.applyingConfiguration ? "Applying…" : "Apply"
+                    enabled: backend.configurationDirty && backend.configurationValid && !backend.applyingConfiguration
+                    onClicked: {
+                        page.commitAllPendingDisplaySettings()
+                        applyConfirmation.open()
                     }
                 }
             }
         }
     }
-    Popup {
-        id: virtualOnlyHint; parent: Overlay.overlay
-        width: Math.min(390, parent.width - 24); padding: 18; focus: true
-        onAboutToShow: {
-            let button = virtualOnlyHelpButton.mapToItem(parent, 0, 0)
-            x = Math.max(12, Math.min(button.x + virtualOnlyHelpButton.width - width, parent.width - width - 12))
-            let above = button.y - height - 8
-            y = Math.max(12, Math.min(above >= 12 ? above : button.y + virtualOnlyHelpButton.height + 8,
-                                     parent.height - height - 12))
-        }
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: theme.surface; border.color: theme.borderHover; radius: theme.cardRadius }
+    Dialog {
+        id: applyConfirmation
+        objectName: "applyConfigurationDialog"
+        title: "Restart to apply changes"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(440, page.width - 24)
+        background: Rectangle { color: theme.surface; border.color: theme.border; radius: theme.cardRadius }
         contentItem: Text {
-            text: "Creates the virtual display without starting Monitorize’s streaming backend. Use your preferred streamer instead."
-            color: theme.textSecondary; font.pixelSize: 12; wrapMode: Text.WordWrap
+            text: backend.streamingBackend === "none"
+                ? (backend.appliedStreamingBackend === "none"
+                    ? "Save these changes? An active display will be recreated."
+                    : "The current session will stop and any connected stream will disconnect. Display-only mode will not start Sunshine.")
+                : "Restart now to apply your changes, or save them for the next restart. Restarting disconnects any connected stream."
+            color: theme.textPrimary
+            wrapMode: Text.WordWrap
+        }
+        onAccepted: backend.applyConfiguration()
+        footer: DialogButtonBox {
+            CustomButton { objectName: "restartLaterButton"; text: "Restart later"; primary: false; DialogButtonBox.buttonRole: DialogButtonBox.ActionRole; onClicked: { applyConfirmation.close(); backend.saveConfigurationForLater() } }
+            CustomButton { text: "Restart"; DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole }
         }
     }
+
 }

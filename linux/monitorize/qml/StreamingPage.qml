@@ -48,7 +48,7 @@ Item {
             if (request !== page.pairRequest || !pinPopup.visible) return
             page.pairRequest = 0
             pinMessage.text = message
-            pinMessage.color = success ? "#86efac" : "#fca5a5"
+            pinMessage.color = success ? theme.successText : theme.errorText
             if (success) pinSuccessCloseTimer.restart()
         }
     }
@@ -95,8 +95,23 @@ Item {
                     Layout.fillWidth: true
                 }
             }
+            SectionCard {
+                objectName: "remoteLoginCard"
+                title: "REMOTE LOGIN"; symbol: "session"
+                visible: backend.remoteLoginEnabled
+                Layout.fillWidth: true
+                Text {
+                    text: backend.remoteLoginMessage
+                    color: theme.textPrimary; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                }
+                TextEdit {
+                    text: backend.localIp + ":47989"
+                    readOnly: true; selectByMouse: true
+                    color: theme.textSecondary; Layout.fillWidth: true
+                }
+            }
             RowLayout {
-                visible: backend.sessionMode === "Extend"
+                visible: !backend.remoteLoginEnabled && backend.sessionMode === "Extend"
                 Layout.fillWidth: true
                 Layout.topMargin: 18
                 spacing: 16
@@ -127,7 +142,7 @@ Item {
                 }
             }
             Rectangle {
-                visible: backend.sessionMode === "Mirror"
+                visible: !backend.remoteLoginEnabled && backend.sessionMode === "Mirror"
                 Layout.fillWidth: true
                 implicitHeight: summary.implicitHeight + 40
                 radius: theme.cardRadius; color: theme.surface; border.color: theme.border
@@ -198,7 +213,7 @@ Item {
                                     color: displayCard.modelData.live ? "#34d681" : theme.textMuted
                                 }
                                 TextEdit {
-                                    text: backend.sessionRunning ? displayCard.modelData.address : displayCard.modelData.state
+                                    text: displayCard.modelData.state + (backend.sessionRunning ? "\n" + displayCard.modelData.address : "")
                                     color: theme.textSecondary; font.pixelSize: 12
                                     Layout.fillWidth: true; wrapMode: TextEdit.WrapAnywhere
                                     readOnly: true; selectByMouse: true
@@ -239,11 +254,13 @@ Item {
                     }
                 }
             }
-            Flow {
+            RowLayout {
+                objectName: "sessionActionButtons"
                 Layout.fillWidth: true
                 spacing: 10
-                CustomButton { text: "Pair Moonlight PIN"; iconSymbol: "link"; implicitHeight: 46; primary: false; visible: backend.streamingBackend !== "none"; enabled: backend.sessionRunning && !backend.sessionBusy; onClicked: page.openPair(1) }
+                CustomButton { objectName: "pairMoonlightButton"; Layout.fillWidth: true; text: "Pair Moonlight PIN"; iconSymbol: "link"; implicitHeight: 46; primary: false; visible: backend.appliedStreamingBackend !== "none"; enabled: backend.sessionRunning && !backend.sessionBusy; onClicked: page.openPair(1) }
                 CustomButton {
+                    Layout.fillWidth: true
                     text: "Save Preset"; iconSymbol: "bookmark"; primary: false; enabled: backend.canSavePreset
                     implicitWidth: 150; implicitHeight: 46
                     onClicked: {
@@ -254,21 +271,44 @@ Item {
                     }
                 }
                 CustomButton {
-                    text: backend.isStreaming || backend.sessionBusy ? "Stop" : "Start"
+                    Layout.fillWidth: true
+                    text: backend.appliedStreamingBackend === "none" ? (backend.isStreaming ? "Remove" : "Create")
+                        : backend.applyingConfiguration ? "Restarting…" : "Restart"
                     implicitWidth: 150; implicitHeight: 46
-                    iconSymbol: text === "Stop" ? "stop" : "play"
-                    danger: text === "Stop"
-                    enabled: text === "Stop" || (!backend.sunshineChoicesSaving
-                        && (backend.sessionMode === "Mirror" || backend.sessionHasDisplays))
-                    onClicked: text === "Stop" ? backend.stopSession() : backend.startSession()
+                    iconSymbol: backend.appliedStreamingBackend === "none" ? (backend.isStreaming ? "stop" : "play") : "reset"
+                    enabled: !backend.applyingConfiguration && !backend.sunshineChoicesSaving
+                    onClicked: {
+                        if (backend.appliedStreamingBackend === "none") {
+                            if (backend.isStreaming) backend.stopSession()
+                            else backend.startSession()
+                        } else backend.restartSession()
+                    }
                 }
                 CustomButton {
+                    Layout.fillWidth: true
+                    objectName: "stopStreamButton"
+                    text: "Stop"; primary: false; iconSymbol: "stop"
+                    implicitWidth: 150; implicitHeight: 46
+                    iconTint: theme.dark ? "#ff777f" : "#c03943"
+                    visible: backend.appliedStreamingBackend !== "none" && (backend.isStreaming || backend.sessionBusy || backend.applyingConfiguration)
+                    onClicked: backend.stopSession()
+                }
+                CustomButton {
+                    Layout.fillWidth: true
                     text: "Start added display"
-                    visible: backend.isStreaming && backend.sessionPendingDisplays
+                    visible: false
                     enabled: !backend.sessionBusy
                     onClicked: backend.startSession()
                 }
-                CustomButton { text: "Display Settings"; primary: false; visible: backend.canConfigureDisplay; onClicked: backend.configureDisplay() }
+                CustomButton { Layout.fillWidth: true; text: "Display Settings"; primary: false; visible: backend.canConfigureDisplay; onClicked: backend.configureDisplay() }
+            }
+            Text {
+                objectName: "savedConfigurationRestartNotice"
+                text: "Changes saved. Restart streaming to apply."
+                visible: backend.configurationRestartRequired
+                color: theme.textSecondary
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
             }
             TextEdit {
                 text: backend.sunshineSettingsMessage
@@ -352,7 +392,7 @@ Item {
                 Text {
                     visible: page.logOpenError.length > 0
                     text: page.logOpenError
-                    color: "#fca5a5"
+                    color: theme.errorText
                     Layout.fillWidth: true
                 }
             }
@@ -424,7 +464,7 @@ Item {
                 }
             }
             CustomTextField { id: presetName; Layout.fillWidth: true; placeholderText: "Preset name"; maximumLength: 32 }
-            Text { id: presetMessage; color: "#fca5a5"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { id: presetMessage; color: theme.errorText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             RowLayout {
                 Layout.alignment: Qt.AlignRight
                 CustomButton { text: "Cancel"; onClicked: presetPopup.close() }

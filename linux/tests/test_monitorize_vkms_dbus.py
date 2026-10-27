@@ -4,9 +4,76 @@ import unittest
 from unittest.mock import Mock, patch
 from monitorize.platform.monitorize_vkms_dbus import (
     MonitorizeVkmsClient, VkmsProtocolError, VkmsCommandError, CREATE_TIMEOUT, REMOVE_TIMEOUT,
+    VkmsServiceUnavailableError, VkmsCliNotFoundError,
 )
 
 class VkmsDbusTest(unittest.TestCase):
+    @staticmethod
+    def bus_error(name):
+        error = RuntimeError('bus connection failed')
+        error.get_dbus_name = lambda: 'org.freedesktop.DBus.Error.' + name
+        return error
+
+    def test_discovery_recovers_once_from_disconnect_with_fresh_connection(self):
+        self.client._bus = Mock()
+        old_bus = self.client._bus
+        self.service.GetCapabilities.side_effect = [self.bus_error('NoReply'), json.dumps(self.capabilities)]
+        with patch('monitorize.platform.monitorize_vkms_dbus.time.sleep'):
+            self.client.require_ready()
+        old_bus.close.assert_called_once()
+        self.assertEqual(self.service.GetCapabilities.call_count, 2)
+        self.assertIsNone(self.client._bus)
+
+    def test_persistent_transport_failure_is_bounded_and_not_missing_package(self):
+        self.service.GetCapabilities.side_effect = self.bus_error('Disconnected')
+        with patch('monitorize.platform.monitorize_vkms_dbus.time.sleep'), self.assertRaises(VkmsServiceUnavailableError):
+            self.client.require_ready()
+        self.assertEqual(self.service.GetCapabilities.call_count, 2)
+
+    def test_missing_service_does_not_retry(self):
+        self.service.GetCapabilities.side_effect = self.bus_error('ServiceUnknown')
+        with self.assertRaises(VkmsCliNotFoundError):
+            self.client.require_ready()
+        self.service.GetCapabilities.assert_called_once()
+
+    def test_mutations_never_replay_after_transport_failure(self):
+        for method, operation in (
+            ('CreateDisplay', lambda: self.client.create_display(1920, 1080, 60, display='mon2')),
+            ('DestroyDisplay', lambda: self.client.remove_display('mon2', 'token2')),
+        ):
+            with self.subTest(method=method):
+                call = getattr(self.service, method)
+                call.side_effect = self.bus_error('NoReply')
+                with self.assertRaises(VkmsServiceUnavailableError):
+                    operation()
+                call.assert_called_once()
+
+    def test_authorization_transport_failure_does_not_suggest_installation(self):
+        self.service.GetAuthorizationState.side_effect = self.bus_error('NoReply')
+        with self.assertRaises(VkmsServiceUnavailableError) as error:
+            self.client.get_authorization_state()
+        self.assertNotIn('Install', str(error.exception))
+
+    def test_missing_authorization_method_is_upgrade_error_not_denial(self):
+        error=RuntimeError('Unknown method: GetAuthorizationState is not a valid method')
+        error.get_dbus_name=lambda:'org.freedesktop.DBus.Error.UnknownMethod'
+        self.service.GetAuthorizationState.side_effect=error
+        with self.assertRaises(VkmsProtocolError) as caught:self.client.get_authorization_state()
+        self.assertIn('Update',str(caught.exception))
+        self.assertNotIn('denied',str(caught.exception))
+
+    def test_unattended_create_uses_only_silent_method(self):
+        self.service.CreateDisplayUnattended.return_value = json.dumps(self.created)
+        self.client.create_display(1920, 1080, 60, display='mon2', unattended=True)
+        self.service.CreateDisplayUnattended.assert_called_once()
+        self.service.CreateDisplay.assert_not_called()
+
+    def test_missing_or_revoked_authorization_is_not_ready(self):
+        self.service.GetAuthorizationState.return_value = json.dumps({'success': True, 'authorization_version': 1, 'unattended_enabled': False})
+        with self.assertRaises(VkmsCommandError):
+            self.client.require_unattended()
+        self.service.CreateDisplay.assert_not_called()
+
     def test_authentication_failures_are_explained_for_bus_errors_and_json_responses(self):
         for detail in ("No authentication agent found", "Polkit denied the Monitorize VKMS request."):
             with self.subTest(detail=detail):

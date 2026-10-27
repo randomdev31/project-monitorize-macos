@@ -23,17 +23,17 @@
 let
   python = python3Packages.python;
   sunshineSource = lib.cleanSource ../external/sunshine;
-  sunshineVersion = "0-unstable-2026-10-03";
+  sunshineVersion = "0-unstable-2026-10-27";
   sunshineForBuild = sunshine.override { inherit cudaSupport; };
   ffmpegArch = {
     x86_64-linux = "Linux-x86_64";
     aarch64-linux = "Linux-aarch64";
   }.${stdenv.hostPlatform.system};
   ffmpegArchive = fetchurl {
-    url = "https://github.com/LizardByte/build-deps/releases/download/v2026.910.121303/${ffmpegArch}-ffmpeg.tar.gz";
+    url = "https://github.com/LizardByte/build-deps/releases/download/v2026.1017.131201/${ffmpegArch}-ffmpeg.tar.gz";
     hash = {
-      x86_64-linux = "sha256-SW0ru2dNAeYDPjG538FcvJ3BSU6IKkUF9qseA/dbOFw=";
-      aarch64-linux = "sha256-IfmUCeGroJGR+d8oaI+3+dRPmOZTeKZRMkxjLBmCOqA=";
+      x86_64-linux = "sha256-st5RGcsKuJy2A4rLdSmbIT+XoMedNFVwaK3WOVEfiBU=";
+      aarch64-linux = "sha256-+myo9xaSLr1L4iJke/ly7AUK8UVAYYZ4fEO/oDU/Ch0=";
     }.${stdenv.hostPlatform.system};
   };
   ffmpegPrepared = runCommand "monitorize-sunshine-ffmpeg" {
@@ -83,7 +83,7 @@ let
     env = previousAttrs.env // {
       BUILD_VERSION = finalAttrs.version;
       BRANCH = "monitorize";
-      COMMIT = "8d043f2b929705a4f6bad30d1e7f700a2de607b6";
+      COMMIT = "bf7fd0a5e6b924eda5def42b682bd27c83004728";
     };
   });
 in

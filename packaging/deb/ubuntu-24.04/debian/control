@@ -97,8 +97,8 @@ Depends: ${misc:Depends},
          udev,
          vainfo,
          xdg-desktop-portal
-Recommends: firewalld
-Suggests: monitorize-vkms
+Recommends: firewalld, x11-xserver-utils
+Suggests: monitorize-vkms (>= 0.3.0)
 Description: Sunshine-backed virtual displays for Moonlight clients
  Monitorize creates compositor-native virtual displays on KDE Plasma, GNOME,
  and Hyprland and streams them to Moonlight clients through isolated, bundled

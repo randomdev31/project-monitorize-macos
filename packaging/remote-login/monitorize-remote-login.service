@@ -1,0 +1,18 @@
+[Unit]
+Description=Monitorize remote-login ownership supervisor
+Requires=monitorize-vkms-boot-display.service
+After=monitorize-vkms-boot-display.service systemd-logind.service dbus.service
+ConditionPathExists=/etc/monitorize/remote-login.json
+
+[Service]
+Type=dbus
+BusName=io.github.vinnavannewton.MonitorizeRemoteLogin1
+ExecStart=/usr/bin/python3 -I /usr/libexec/monitorize/remote-login/entry.py service
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+KillMode=control-group
+
+[Install]
+WantedBy=graphical.target

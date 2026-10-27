@@ -41,6 +41,15 @@ This table shows whether each desktop environment supports via compositor-native
 | Niri | ❌ | ✅ |
 | Cinnamon X11 | ❌ | ✅ |
 
+Native **Virtual displays only** uses guarded layout restoration on KDE/GNOME,
+Hyprland, Niri/VKMS, and Xorg/VKMS sessions. The shared X11 backend uses XRandR
+and Sunshine X11 capture; Cinnamon, XFCE, MATE, LXQt and other Xorg desktops use
+the same capability checks. The new Hyprland/X11/Niri paths have automated source
+coverage; live acceptance on each desktop/GPU remains pending. X11 requires
+`xrandr`; Hyprland VKMS requires an updated host helper and a reported running
+Aquamarine version of at least 0.15.1. These desktop options do not change the
+login-screen display policy.
+
 ## Installation
 
 - [Fedora](https://github.com/vinnavannewton/project-monitorize/wiki/Fedora-installation)

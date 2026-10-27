@@ -14,6 +14,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FirstRunSetupTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        config = patch.multiple(settings, CONFIG_DIR=self.temp.name, CONFIG_FILE=str(Path(self.temp.name)/"settings.ini"))
+        config.start();self.addCleanup(config.stop)
+
 
     def test_reset_sunshine_settings_refuses_a_live_settings_process(self):
         fake = SimpleNamespace(isStreaming=False, sessionBusy=False,
@@ -59,7 +65,7 @@ class FirstRunSetupTest(unittest.TestCase):
 
     def test_session_running_follows_ready_controller_even_without_session_flag(self):
         controller = SimpleNamespace(streaming=True, primary_ready=True)
-        backend = SimpleNamespace(streaming=controller)
+        backend = SimpleNamespace(streaming=controller, session=SimpleNamespace(client_runtime=None))
         self.assertTrue(MonitorizeBackend.sessionRunning.fget(backend))
         controller.primary_ready = False
         self.assertFalse(MonitorizeBackend.sessionRunning.fget(backend))
@@ -77,6 +83,8 @@ class FirstRunSetupTest(unittest.TestCase):
     ):
         backend = MonitorizeBackend("")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.network_timer.stop)
         self.addCleanup(backend._settings_timer.stop)
         backend.streaming.streaming = False
@@ -103,11 +111,13 @@ class FirstRunSetupTest(unittest.TestCase):
     @patch("monitorize.desktop.backend.get_local_ip", return_value="192.0.2.1")
     @patch("monitorize.desktop.backend.StreamingController")
     @patch("monitorize.desktop.backend.get_system_setup_status", return_value={"available": False})
-    def test_webpage_settings_are_imported_before_session_start(
+    def test_webpage_settings_do_not_replace_applied_snapshot_on_start(
         self, _status, _streaming, _ip, _presets, _settings
     ):
         backend = MonitorizeBackend("kde")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.network_timer.stop)
         backend.streaming.streaming = False
         backend.streaming.third_streaming = False
@@ -119,13 +129,13 @@ class FirstRunSetupTest(unittest.TestCase):
             start.assert_called_once()
             imported = backend.loadDisplaySettings()
         saved = settings.load_display_settings()
-        self.assertEqual(saved["sunshine_encoder"], "Software")
-        self.assertEqual(saved["sunshine_codec"], "H.264")
-        self.assertTrue(saved["streaming_customized"])
-        self.assertFalse(saved["sunshine_native_pen_touch"])
-        self.assertTrue(saved["enable_audio"])
-        self.assertEqual(backend.session.configuration()["encoder"], "Software")
-        self.assertEqual(imported["sunshine_codec"], "H.264")
+        self.assertEqual(saved["sunshine_encoder"], "Auto")
+        self.assertEqual(saved["sunshine_codec"], "Auto")
+        self.assertFalse(saved["streaming_customized"])
+        self.assertTrue(saved["sunshine_native_pen_touch"])
+        self.assertFalse(saved["enable_audio"])
+        self.assertEqual(backend.session.configuration()["encoder"], "Auto")
+        self.assertEqual(imported["sunshine_codec"], "Auto")
 
     @patch("monitorize.desktop.backend.get_sunshine_config_dir")
     @patch("monitorize.desktop.backend.app_log.read_tail")
@@ -141,6 +151,8 @@ class FirstRunSetupTest(unittest.TestCase):
         read_tail.side_effect = ["first", "second", "monitorize"]
         backend = MonitorizeBackend("kde")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.network_timer.stop)
         logs = backend.sessionLog()
         self.assertIn("===== Sunshine instance 1 =====\nfirst", logs)
@@ -163,6 +175,11 @@ class FirstRunSetupTest(unittest.TestCase):
         )
         self.config_patch.start()
         self.addCleanup(self.config_patch.stop)
+        # These tests exercise ordinary local startup, not an installed host enrollment.
+        enrollment = patch("monitorize.desktop.remote_login_runtime.SETTINGS",
+                           Path(self.tempdir.name) / "no-enrollment.json")
+        enrollment.start()
+        self.addCleanup(enrollment.stop)
 
     def test_setup_decision_defaults_false_and_persists_without_resetting_tray_setting(self):
         self.assertFalse(settings.load_general_settings()["system_setup_decided"])
@@ -183,6 +200,8 @@ class FirstRunSetupTest(unittest.TestCase):
     ):
         backend = MonitorizeBackend("sway")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.network_timer.stop)
         self.assertTrue(backend.systemSetupPending)
         backend.markSystemSetupDecided()
@@ -199,6 +218,8 @@ class FirstRunSetupTest(unittest.TestCase):
     ):
         backend = MonitorizeBackend("kde")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.network_timer.stop)
         self.assertFalse(backend.systemSetupPending)
 
@@ -212,9 +233,12 @@ class FirstRunSetupTest(unittest.TestCase):
     ):
         backend = MonitorizeBackend("kde")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.close)
         with patch("monitorize.desktop.backend.MonitorizeVkmsClient") as client:
-            for failure in (RuntimeError("Upgrade and reboot"), None):
+            from monitorize.platform.monitorize_vkms_dbus import VkmsServiceUnavailableError, VkmsCliNotFoundError
+            for failure in (VkmsCliNotFoundError(), VkmsServiceUnavailableError('Service disconnected'), RuntimeError("Upgrade and reboot"), None):
                 client.return_value.require_ready.side_effect = failure
                 loop=QEventLoop()
                 backend.vkmsHelperAvailabilityChanged.connect(loop.quit)
@@ -222,6 +246,8 @@ class FirstRunSetupTest(unittest.TestCase):
                 QTimer.singleShot(1000,loop.quit)
                 loop.exec()
                 self.assertEqual(backend.vkmsHelperAvailable,failure is None)
+                self.assertEqual(backend.vkmsInstallRequired, isinstance(failure, VkmsCliNotFoundError))
+                self.assertEqual(backend.vkmsAvailabilityMessage, '' if failure is None else str(failure))
             client.return_value.is_available.assert_not_called()
 
     @patch("monitorize.desktop.backend.apply_system_setup", return_value={"success": False, "message": "Cancelled"})
@@ -235,6 +261,8 @@ class FirstRunSetupTest(unittest.TestCase):
     ):
         backend = MonitorizeBackend("kde")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.network_timer.stop)
         self.assertFalse(backend.applySystemSetup(True, True)["success"])
         self.assertTrue(backend.systemSetupPending)
@@ -250,6 +278,8 @@ class FirstRunSetupTest(unittest.TestCase):
         for desktop, expected in (("hyprland", True), ("sway", True), ("kde", False), ("gnome", False), ("", False)):
             backend = MonitorizeBackend(desktop)
             backend.streaming._vkms_retiring = {}
+            backend.streaming.streaming = False
+            backend.streaming.third_streaming = False
             self.addCleanup(backend.network_timer.stop)
             self.assertEqual(backend.canConfigureDisplay, expected)
 
@@ -263,6 +293,8 @@ class FirstRunSetupTest(unittest.TestCase):
     ):
         backend = MonitorizeBackend("")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.network_timer.stop)
         backend.native_compositor_resolver = lambda: "sway"
         backend.session.configuration = lambda: {
@@ -295,6 +327,8 @@ class FirstRunSetupTest(unittest.TestCase):
     ):
         backend = MonitorizeBackend("")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.network_timer.stop)
         backend.native_compositor_resolver = lambda: ""
         backend.session.configuration = lambda: {
@@ -318,6 +352,8 @@ class FirstRunSetupTest(unittest.TestCase):
         for desktop in ("hyprland", "sway", "kde", "gnome"):
             backend = MonitorizeBackend(desktop)
             backend.streaming._vkms_retiring = {}
+            backend.streaming.streaming = False
+            backend.streaming.third_streaming = False
             self.addCleanup(backend.network_timer.stop)
             results = []
             backend.virtualDisplayCleanupFinished.connect(lambda ok, message: results.append((ok, message)))
@@ -360,6 +396,8 @@ class FirstRunSetupTest(unittest.TestCase):
     ):
         backend = MonitorizeBackend("hyprland")
         backend.streaming._vkms_retiring = {}
+        backend.streaming.streaming = False
+        backend.streaming.third_streaming = False
         self.addCleanup(backend.network_timer.stop)
         backend.streaming.streaming = False
 
@@ -402,7 +440,7 @@ class FirstRunSetupTest(unittest.TestCase):
         self.assertIn("backend.markSystemSetupDecided()", main)
         self.assertIn("property bool firstRun: false", setup)
         self.assertIn("if (page.statusSucceeded && page.firstRun)", setup)
-        self.assertIn("backend.startSystemSetup(inputCheck.checked, firewallCheck.checked)", setup)
+        self.assertIn("backend.startSystemSetup(inputCheck.checked, firewallCheck.checked, unattendedVkmsCheck.checked)", setup)
         self.assertNotIn("Finish system setup", main)
         self.assertIn("visible: backend.canConfigureDisplay", streaming)
 

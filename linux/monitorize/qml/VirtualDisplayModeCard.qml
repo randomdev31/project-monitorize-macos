@@ -16,6 +16,9 @@ Rectangle {
     property bool canRemove: false
     property bool vkmsSelected: false
     property bool sunshineEnabled: true
+    property bool clientSettingsAvailable: true
+    readonly property bool clientRequested: clientSettingsAvailable
+        && !!(displayConfig && displayConfig.use_client_display_settings)
     property var nativeResolutionOptions: []
     property var vkmsResolutionOptions: []
     property bool syncing: false
@@ -32,7 +35,7 @@ Rectangle {
     readonly property var resolutionOptions: vkmsSelected
         ? vkmsResolutionOptions : nativeResolutionOptions
     readonly property bool customSelected: resolution.currentText === "Custom..."
-    readonly property bool customInputsVisible: customSelected
+    readonly property bool customInputsVisible: customSelected && !clientRequested
 
     function refreshLabel(value) {
         return String(value || "60") + " Hz"
@@ -109,7 +112,7 @@ Rectangle {
             LineIcon { symbol: "display"; Layout.preferredWidth: 22; Layout.preferredHeight: 22 }
             Text {
                 text: "Virtual Display " + card.displayNumber
-                color: "#b1d6ff"; font.pixelSize: 14; font.weight: Font.DemiBold
+                color: theme.headingText; font.pixelSize: 14; font.weight: Font.DemiBold
                 Layout.fillWidth: true
             }
             AbstractButton {
@@ -118,21 +121,58 @@ Rectangle {
                 implicitWidth: 36
                 implicitHeight: 36
                 Accessible.name: "Remove Virtual Display " + card.displayNumber
-                ToolTip.visible: hovered
-                ToolTip.text: Accessible.name
                 background: Rectangle {
                     radius: theme.controlRadius
-                    color: removeButton.hovered ? "#74303d" : "transparent"
+                    color: "transparent"
+                    border.width: removeButton.visualFocus ? 1 : 0
+                    border.color: theme.borderHover
                 }
                 LineIcon {
                     symbol: "trash"
-                    tint: removeButton.hovered ? "#ffffff" : "#ff777f"
+                    tint: theme.dark
+                        ? (removeButton.hovered ? "#ff9da3" : "#ff777f")
+                        : (removeButton.hovered ? "#d43b44" : "#b4232d")
                     anchors.centerIn: parent
                     width: 22
                     height: 22
                 }
                 onClicked: card.removeRequested()
             }
+        }
+
+        RowLayout {
+            spacing: 8
+            Layout.fillWidth: true
+            CustomCheckBox {
+                text: "Use client display settings"
+                checked: !!(card.displayConfig && card.displayConfig.use_client_display_settings)
+                enabled: card.clientSettingsAvailable && card.sunshineEnabled
+                Layout.fillWidth: false
+                onClicked: card.commit({use_client_display_settings: checked})
+            }
+            ToolButton {
+                id: clientInfo
+                text: "?"
+                Accessible.name: "About client display settings"
+                property string helpText: "Use the resolution and FPS requested by the client (Moonlight / Artemis)."
+                ToolTip.visible: hovered
+                ToolTip.text: helpText
+                onClicked: clientHelp.open()
+                Popup {
+                    id: clientHelp
+                    width: Math.min(360, card.width - 32)
+                    x: 0
+                    y: clientInfo.height
+                    padding: 12
+                    contentItem: Text {
+                        text: clientInfo.helpText
+                        color: theme.textPrimary
+                        wrapMode: Text.WordWrap
+                    }
+                    background: Rectangle { color: theme.surface; border.color: theme.border; radius: theme.controlRadius }
+                }
+            }
+            Item { Layout.fillWidth: true }
         }
 
         GridLayout {
@@ -151,7 +191,10 @@ Rectangle {
                 id: resolution
                 Layout.fillWidth: true
                 model: card.resolutionOptions
-                displayText: currentIndex < 0 ? "Select an available mode" : currentText
+                enabled: !card.clientRequested
+                opacity: enabled ? 1 : 0.45
+                displayText: card.clientRequested ? "Requested by client"
+                    : (currentIndex < 0 ? "Select an available mode" : currentText)
                 onActivated: {
                     if (card.syncing) return
                     refresh.selectValue("60 Hz", true)
@@ -162,9 +205,10 @@ Rectangle {
                 id: refresh
                 Layout.fillWidth: true
                 model: ["30 Hz", "60 Hz", "75 Hz", "90 Hz", "120 Hz", "144 Hz", "Custom..."]
-                enabled: count > 0
+                enabled: count > 0 && !card.clientRequested
                 opacity: enabled ? 1 : 0.45
-                displayText: currentIndex < 0 ? "Select an available rate" : currentText
+                displayText: card.clientRequested ? "Requested by client"
+                    : (currentIndex < 0 ? "Select an available rate" : currentText)
                 onActivated: card.commitCurrentMode()
             }
             RowLayout {
@@ -174,22 +218,22 @@ Rectangle {
                     id: customWidth
                     Layout.fillWidth: true
                     placeholderText: "Width"; maximumLength: 4
-                    onEditingFinished: card.commitCurrentMode()
+                    onTextEdited: card.commitCurrentMode()
                 }
                 Text { text: "×"; color: theme.textSecondary }
                 CustomTextField {
                     id: customHeight
                     Layout.fillWidth: true
                     placeholderText: "Height"; maximumLength: 4
-                    onEditingFinished: card.commitCurrentMode()
+                    onTextEdited: card.commitCurrentMode()
                 }
             }
             CustomTextField {
                 id: customRefresh
-                visible: refresh.currentText === "Custom..."
+                visible: refresh.currentText === "Custom..." && !card.clientRequested
                 Layout.fillWidth: true
                 placeholderText: "24–240"; maximumLength: 3
-                onEditingFinished: card.commitCurrentMode()
+                onTextEdited: card.commitCurrentMode()
             }
         }
         SunshineDisplayCard {

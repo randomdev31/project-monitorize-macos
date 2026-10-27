@@ -49,6 +49,8 @@ def detect_desktop_environment() -> str:
             return name
     if os.environ.get("NIRI_SOCKET"):
         return "niri"
+    if os.environ.get('XDG_SESSION_TYPE', '').lower() == 'x11' and os.environ.get('DISPLAY'):
+        return 'x11'
     return ""
 
 

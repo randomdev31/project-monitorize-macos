@@ -123,7 +123,7 @@ ColumnLayout {
         LineIcon { symbol: "streaming"; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
         Text {
             text: "Sunshine"
-            color: card.enabled ? "#b1d6ff" : theme.textMuted
+            color: card.enabled ? theme.headingText : theme.textMuted
             font.pixelSize: 13; font.weight: Font.DemiBold
             Layout.fillWidth: true
         }
@@ -214,7 +214,7 @@ ColumnLayout {
     Text {
         visible: card.saveError.length > 0
         text: card.saveError
-        color: "#fca5a5"
+        color: theme.errorText
         wrapMode: Text.WordWrap
         Layout.fillWidth: true
     }
