@@ -93,6 +93,7 @@ jobs:
           done
 
   rpm-source:
+    name: Native packaging validation
     runs-on: ubuntu-latest
     container: fedora:44
     timeout-minutes: 15
