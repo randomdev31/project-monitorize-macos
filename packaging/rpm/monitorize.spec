@@ -7,7 +7,7 @@
 %bcond_without cuda
 
 Name:           monitorize
-Version:        0.33.4
+Version:        0.34
 Release:        1%{?dist}
 Summary:        Sunshine-backed virtual displays for Moonlight clients
 
@@ -333,6 +333,9 @@ fi
 
 
 %changelog
+* Tue Oct 27 2026 Monitorize contributors <noreply@example.com> - 0.34-1
+- Release Monitorize 0.34.
+
 * Tue Oct 13 2026 Monitorize contributors <noreply@example.com> - 0.33.4-1
 - Release Monitorize 0.33.4.
 
