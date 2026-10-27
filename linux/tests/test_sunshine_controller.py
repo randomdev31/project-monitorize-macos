@@ -202,6 +202,8 @@ class SunshineControllerTest(unittest.TestCase):
     def test_niri_vkms_auto_reports_missing_kms_permissions(self):
         controller = self.controller("niri")
         message = "KMS capture requires cap_sys_admin on Monitorize's Sunshine binary."
+        errors = []
+        controller.errorReported.connect(errors.append)
         with (
             patch("monitorize.desktop.streaming_controller.get_sunshine_kms_setup_error", return_value=message),
             patch("monitorize.desktop.streaming_controller.sync_sunshine_stream_config") as sync,
@@ -209,6 +211,7 @@ class SunshineControllerTest(unittest.TestCase):
         ):
             self.assertFalse(controller._start_instance(1, "Virtual-1", 2340, 1080, vkms=True))
         self.assertEqual(controller.status, message)
+        self.assertEqual(errors, [message])
         sync.assert_not_called()
         start.assert_not_called()
 
@@ -832,6 +835,8 @@ Virtual-1-2 connected
     ):
         mock_health.return_value = (False, 1, "VAAPI init failed")
         controller = self.controller()
+        errors = []
+        controller.errorReported.connect(errors.append)
         controller.streaming = True
         controller.sunshine_watchdog_timer.start(1000)
 
@@ -845,6 +850,7 @@ Virtual-1-2 connected
         )
         mock_singleshot.assert_called_once_with(0, controller.stop)
         self.assertIn("stopped unexpectedly", controller.status)
+        self.assertEqual(errors, [controller.status])
 
     @patch("monitorize.desktop.streaming_controller.app_log.write")
     @patch("monitorize.desktop.streaming_controller.QTimer.singleShot")
@@ -859,6 +865,8 @@ Virtual-1-2 connected
 
         mock_health.side_effect = health_side_effect
         controller = self.controller()
+        errors = []
+        controller.errorReported.connect(errors.append)
         controller.streaming = True
         controller.third_streaming = True
         controller.sunshine_watchdog_timer.start(1000)
@@ -871,6 +879,7 @@ Virtual-1-2 connected
             level=logging.ERROR,
         )
         mock_singleshot.assert_called_once_with(0, controller.stop_third)
+        self.assertEqual(errors, [controller.status])
 
     @patch("monitorize.desktop.streaming_controller.app_log.write")
     @patch("monitorize.desktop.streaming_controller.QTimer.singleShot")

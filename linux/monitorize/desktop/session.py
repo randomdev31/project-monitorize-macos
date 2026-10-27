@@ -81,10 +81,10 @@ class Session(QObject):
 
     def _start_client_cards(self, listeners_only=False):
         if self.controller.streaming_backend == "none":
-            self.controller._set_status("Client display settings require Sunshine.")
+            self.controller._set_error("Client display settings require Sunshine.")
             return
         if self.controller.streaming:
-            self.controller._set_status("Stop the current session before changing display settings.")
+            self.controller._set_error("Stop the current session before changing display settings.")
             return
         runtime = self._runtime()
         general = load_general_settings()
@@ -99,7 +99,7 @@ class Session(QObject):
                       "resolution": config["res"],
                       "client_restart_on_crash": True}
             if not runtime.start_slot(instance, config):
-                self.controller._set_status(str(runtime.error))
+                self.controller._set_error(str(runtime.error))
                 self.controller.startFailed.emit()
         self.running = bool(runtime.active)
         self.changed.emit()
@@ -268,7 +268,7 @@ class Session(QObject):
                 if not recover_before_cleanup():
                     raise RuntimeError('Previous display recovery is still running. Wait before starting another session.')
             except Exception as exc:
-                self.controller._set_status(str(exc))
+                self.controller._set_error(str(exc))
                 self.controller.startFailed.emit()
                 return
         if self.uses_managed_runtime():

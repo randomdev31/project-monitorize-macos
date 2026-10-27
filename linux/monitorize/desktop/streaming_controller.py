@@ -172,6 +172,7 @@ class StreamingController(QObject):
     vkmsReinstallRequired = pyqtSignal()
     codecMismatch = pyqtSignal(str)
     statusChanged = pyqtSignal(str)
+    errorReported = pyqtSignal(str)
     secondStreamChanged = pyqtSignal(bool)
     primaryReadyChanged = pyqtSignal(bool)
     logAppended = pyqtSignal(str, str)
@@ -252,6 +253,10 @@ class StreamingController(QObject):
         self.status = value
         self.statusChanged.emit(value)
 
+    def _set_error(self, message):
+        self._set_status(message)
+        self.errorReported.emit(message)
+
     def _capture_start_error(self, instance, detail):
         capture = self.capture if instance == 1 else self.third_capture
         if capture != "auto" and detail:
@@ -309,7 +314,7 @@ class StreamingController(QObject):
                 self.width, self.height = sanitize_resolution(res, DEFAULT_PRIMARY_RESOLUTION)
                 self.fps = sanitize_fps(fps)
         except ValueError as exc:
-            self._set_status(str(exc))
+            self._set_error(str(exc))
             self.startFailed.emit()
             return
         self.encoder = str(encoder or "Auto")
@@ -332,7 +337,7 @@ class StreamingController(QObject):
         if self.display_type == "Mirror":
             if self.streaming_backend == "none":
                 self._set_streaming(False)
-                self._set_status("Mirror mode requires the Sunshine backend")
+                self._set_error("Mirror mode requires the Sunshine backend")
                 self.startFailed.emit()
                 return
             from monitorize.platform.mirror_outputs import active_outputs, select_output
@@ -340,7 +345,7 @@ class StreamingController(QObject):
                 target = select_output(active_outputs(self.de), self.mirror_output)
             except ValueError as exc:
                 self._set_streaming(False)
-                self._set_status(str(exc))
+                self._set_error(str(exc))
                 self.logAppended.emit("DISPLAY", f"ERROR: {exc}")
                 self.startFailed.emit()
                 return
@@ -354,7 +359,7 @@ class StreamingController(QObject):
                     f"Could not determine the current native resolution of "
                     f"{self.mirror_output}"
                 )
-                self._set_status(message)
+                self._set_error(message)
                 self.logAppended.emit("DISPLAY", f"ERROR: {message}")
                 self.startFailed.emit()
                 return
@@ -466,17 +471,17 @@ class StreamingController(QObject):
             if event and event.get("type") == "headless_ready":
                 self._display_ready(slot, event)
             elif event and event.get("type") == "vkms_reinstall_required":
-                self._set_status("Reinstall monitorize-vkms to repair its helper for this kernel.")
+                self._set_error("Reinstall monitorize-vkms to repair its helper for this kernel.")
                 self.vkmsReinstallRequired.emit()
             elif line.startswith("[ERROR]"):
-                self._set_status(line.removeprefix("[ERROR]").strip())
+                self._set_error(line.removeprefix("[ERROR]").strip())
 
     def _display_ready(self, slot, event):
         self.display_events[slot] = dict(event)
         output_name = str(event.get("name") or "")
         instance = 1 if slot == "primary" else 2
         if not output_name:
-            self._set_status("Virtual display started without an output name")
+            self._set_error("Virtual display started without an output name")
             return
         width = int(event.get("width") or (self.width if instance == 1 else self.third_width))
         height = int(event.get("height") or (self.height if instance == 1 else self.third_height))
@@ -497,7 +502,7 @@ class StreamingController(QObject):
             except (TypeError, ValueError):
                 pipewire_node = 0
             if pipewire_node <= 0:
-                self._set_status(
+                self._set_error(
                     f"Virtual display {output_name} has no valid PipeWire capture node"
                 )
                 if instance == 1:
@@ -600,7 +605,7 @@ class StreamingController(QObject):
         if gpu_id and not selected_gpu:
             message = f"Selected encoding GPU {gpu_id} is unavailable; stream was not started."
             self.logAppended.emit("SUNSHINE", f"ERROR: {message}")
-            self._set_status(message)
+            self._set_error(message)
             return False
         elif selected_gpu:
             self.logAppended.emit(
@@ -658,7 +663,7 @@ class StreamingController(QObject):
             target_output = sunshine_environment.get("MONITORIZE_CAPTURE_OUTPUT", "")
             if not target_output:
                 message = "COSMIC portal capture requires a named display output."
-                self._set_status(message)
+                self._set_error(message)
                 self.logAppended.emit("SUNSHINE", f"ERROR: {message}")
                 return False
             self.logAppended.emit(
@@ -670,7 +675,7 @@ class StreamingController(QObject):
             try:
                 capture_output = _x11_capture_output(output_name)
             except ValueError as exc:
-                self._set_status(str(exc))
+                self._set_error(str(exc))
                 self.logAppended.emit("SUNSHINE", f"ERROR: {exc}")
                 return False
             self.logAppended.emit("SUNSHINE", f"X11 output {output_name} maps to {capture_output}")
@@ -682,7 +687,7 @@ class StreamingController(QObject):
         if capture == "kms":
             error = get_sunshine_kms_setup_error(instance)
             if error:
-                self._set_status(error)
+                self._set_error(error)
                 self.logAppended.emit("SUNSHINE", f"ERROR: {error}")
                 return False
         if is_sunshine_settings_instance(instance):
@@ -699,7 +704,7 @@ class StreamingController(QObject):
             capture=capture,
         )
         if not ok:
-            self._set_status(message)
+            self._set_error(message)
             self.logAppended.emit("SUNSHINE", f"ERROR: {message}")
             return False
         save_sunshine_config(
@@ -718,7 +723,7 @@ class StreamingController(QObject):
         ok, message = start_sunshine(instance, **start_kwargs)
         if not ok:
             message = self._capture_start_error(instance, message)
-            self._set_status(message)
+            self._set_error(message)
             self.logAppended.emit("SUNSHINE", f"ERROR: {message}")
             return False
         if capture == "x11":
@@ -738,7 +743,7 @@ class StreamingController(QObject):
                 stop_sunshine(instance)
                 error = (f"Sunshine could not capture X11 display {output_name}; "
                          "stopped to avoid streaming another screen.")
-                self._set_status(error)
+                self._set_error(error)
                 self.logAppended.emit("SUNSHINE", f"ERROR: {error}")
                 return False
         self.logAppended.emit("SUNSHINE", message)
@@ -751,7 +756,7 @@ class StreamingController(QObject):
         if generation == current_generation and process is current_process:
             message = f"Virtual display process error: {process.errorString()}"
             self.logAppended.emit("DISPLAY", message)
-            self._set_status(message)
+            self._set_error(message)
             if process.error() == QProcess.ProcessError.FailedToStart:
                 self.startFailed.emit()
                 QTimer.singleShot(0, self.stop if slot == "primary" else self.stop_third)
@@ -768,7 +773,7 @@ class StreamingController(QObject):
                 message = self.status if code else "Virtual display stopped unexpectedly"
                 self.logAppended.emit("DISPLAY", f"Process exited with code {code}")
                 self.stop()
-                self._set_status(message)
+                self._set_error(message)
                 self.startFailed.emit()
         else:
             self.third_streamer = None
@@ -789,10 +794,10 @@ class StreamingController(QObject):
         capture="auto",
     ):
         if not self.streaming or not self.primary_ready:
-            self._set_status("Start the primary display before adding another display")
+            self._set_error("Start the primary display before adding another display")
             return
         if self.virtual_display_creator != "vkms" and self.de not in ("kde", "gnome", "hyprland", "sway"):
-            self._set_status("Additional displays require KDE, GNOME, Hyprland, or Sway")
+            self._set_error("Additional displays require KDE, GNOME, Hyprland, or Sway")
             return
         if self._vkms_retiring:
             self._set_status("VKMS display cleanup is still in progress — please wait")
@@ -808,7 +813,7 @@ class StreamingController(QObject):
                 self.third_width, self.third_height = sanitize_resolution(res, DEFAULT_SECONDARY_RESOLUTION)
                 self.third_fps = sanitize_fps(fps)
         except ValueError as exc:
-            self._set_status(str(exc))
+            self._set_error(str(exc))
             self.startFailed.emit()
             return
         self.third_encoder = str(encoder or "Auto")
@@ -858,13 +863,13 @@ class StreamingController(QObject):
             self.logAppended.emit("DISPLAY", raw)
             for line in raw.splitlines():
                 if line.startswith("[ERROR]"):
-                    self._set_status(line.removeprefix("[ERROR]").strip())
+                    self._set_error(line.removeprefix("[ERROR]").strip())
 
     def _vkms_cleanup_finished(self, process, code):
         self._read_vkms_cleanup(process)
         record = self._vkms_retiring.pop(process, None)
         if record and code:
-            self._set_status(f"VKMS {record['slot']} cleanup could not be confirmed. Use Remove virtual displays for recovery.")
+            self._set_error(f"VKMS {record['slot']} cleanup could not be confirmed. Use Remove virtual displays for recovery.")
         if not self._vkms_retiring:
             self._vkms_cleanup_timer.stop()
         else:
@@ -877,7 +882,7 @@ class StreamingController(QObject):
                 self._vkms_cleanup_finished(process, process.exitCode())
             elif record["deadline"] is not None and time.monotonic() >= record["deadline"] and not record["reported"]:
                 record["reported"] = True
-                self._set_status("VKMS cleanup is taking too long; its holder remains alive for safe recovery.")
+                self._set_error("VKMS cleanup is taking too long; its holder remains alive for safe recovery.")
 
     def stop_third(self):
         self._pending_sunshine_ready.pop(2, None)
@@ -1000,7 +1005,7 @@ class StreamingController(QObject):
                     message = self._capture_start_error(1, message)
                 app_log.write("SUNSHINE", message, level=logging.ERROR)
                 self.logAppended.emit("SUNSHINE", f"ERROR: {message}")
-                self._set_status(message)
+                self._set_error(message)
                 self._stop_after_primary_failure()
                 return
             pending = self._pending_sunshine_ready.get(1)
@@ -1011,7 +1016,7 @@ class StreamingController(QObject):
                     pending[1]()
                 elif state == "failed" or time.monotonic() - pending[0] > 120:
                     self._pending_sunshine_ready.pop(1, None)
-                    self._set_status(self._capture_start_error(1, detail or "Sunshine startup timed out"))
+                    self._set_error(self._capture_start_error(1, detail or "Sunshine startup timed out"))
                     self.startFailed.emit()
                     self._stop_after_primary_failure()
                     return
@@ -1019,7 +1024,7 @@ class StreamingController(QObject):
             if target and get_sunshine_x11_capture_status(
                 1, target, self._sunshine_log_offsets[1]
             ) == "fallback":
-                self._set_status(f"Sunshine lost X11 display {target}; streaming stopped to protect your other screens.")
+                self._set_error(f"Sunshine lost X11 display {target}; streaming stopped to protect your other screens.")
                 self.startFailed.emit()
                 self._stop_after_primary_failure()
                 return
@@ -1043,7 +1048,7 @@ class StreamingController(QObject):
                     message = f"Sunshine rejected the selected encoder or codec: {strict_error}"
                 app_log.write("SUNSHINE", message, level=logging.ERROR)
                 self.logAppended.emit("SUNSHINE", f"ERROR: {message}")
-                self._set_status(message)
+                self._set_error(message)
                 if toast_message:
                     self.codecMismatch.emit(toast_message)
                 else:
@@ -1065,7 +1070,7 @@ class StreamingController(QObject):
                         message = self._capture_start_error(2, message)
                     app_log.write("SUNSHINE", message, level=logging.ERROR)
                     self.logAppended.emit("SUNSHINE", f"ERROR: {message}")
-                    self._set_status(message)
+                    self._set_error(message)
                     QTimer.singleShot(0, self.stop_third)
                     return
                 pending = self._pending_sunshine_ready.get(2)
@@ -1076,7 +1081,7 @@ class StreamingController(QObject):
                         pending[1]()
                     elif state == "failed" or time.monotonic() - pending[0] > 120:
                         self._pending_sunshine_ready.pop(2, None)
-                        self._set_status(self._capture_start_error(2, detail or "Sunshine startup timed out"))
+                        self._set_error(self._capture_start_error(2, detail or "Sunshine startup timed out"))
                         self.startFailed.emit()
                         QTimer.singleShot(0, self.stop_third)
                         return
@@ -1084,7 +1089,7 @@ class StreamingController(QObject):
                 if target and get_sunshine_x11_capture_status(
                     2, target, self._sunshine_log_offsets[2]
                 ) == "fallback":
-                    self._set_status(f"Sunshine lost X11 display {target}; the second stream was stopped.")
+                    self._set_error(f"Sunshine lost X11 display {target}; the second stream was stopped.")
                     self.startFailed.emit()
                     QTimer.singleShot(0, self.stop_third)
                     return
@@ -1108,7 +1113,7 @@ class StreamingController(QObject):
                         message = f"Second Sunshine instance rejected the selected encoder or codec: {strict_error}"
                     app_log.write("SUNSHINE", message, level=logging.ERROR)
                     self.logAppended.emit("SUNSHINE", f"ERROR: {message}")
-                    self._set_status(message)
+                    self._set_error(message)
                     if toast_message:
                         self.codecMismatch.emit(toast_message)
                     QTimer.singleShot(0, self.stop_third)

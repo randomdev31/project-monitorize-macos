@@ -8,6 +8,7 @@ import ctypes
 import http.client
 import json
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -450,7 +451,7 @@ def get_sunshine_kms_setup_error(instance: int = 1) -> str:
     if result.returncode != 0 or "cap_sys_admin" not in result.stdout.lower():
         return (
             "KMS capture requires cap_sys_admin on Monitorize's Sunshine binary. "
-            f"Run: sudo setcap cap_sys_admin+p {command[0]}"
+            f"Run: sudo setcap cap_sys_admin+p {shlex.quote(command[0])}"
         )
     return ""
 

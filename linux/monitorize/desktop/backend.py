@@ -77,6 +77,7 @@ class MonitorizeBackend(QObject):
     vkmsReinstallRequired = pyqtSignal()
     streamingCodecMismatch = pyqtSignal(str)
     streamingStatusChanged = pyqtSignal(str)
+    sessionErrorChanged = pyqtSignal()
     logAppended = pyqtSignal(str, str)
     secondStreamActiveChanged = pyqtSignal(bool)
     configureDisplayRequested = pyqtSignal()
@@ -120,6 +121,9 @@ class MonitorizeBackend(QObject):
         super().__init__(parent)
         self._detected_de = de
         self._ui_visible = False
+        self._session_errors = []
+        self._observed_runtime_errors = set()
+        self._observed_remote_error = ""
         self.native_compositor_resolver = None
         self._settings_instance = None
         self._settings_deadline = 0.0
@@ -241,6 +245,17 @@ class MonitorizeBackend(QObject):
         self.streaming.secondStreamChanged.connect(self.secondStreamActiveChanged)
         self.streaming.logAppended.connect(app_log.write)
         self.streaming.logAppended.connect(self.logAppended)
+        self.streaming.errorReported.connect(self._remember_session_error)
+        # Retain failures independently of status text, cleanup and QML page lifetime.
+        self.configurationApplyFinished.connect(self._remember_session_failure)
+        self.virtualDisplayCleanupFinished.connect(self._remember_session_failure)
+        self.streamingStartFailed.connect(self._remember_streaming_failure)
+        self.streamingCodecMismatch.connect(self._remember_codec_failure)
+        self.remoteLoginSetupBlocked.connect(self._remember_session_error)
+        self.sunshineChoicesFinished.connect(
+            lambda instance, success, message: self._remember_session_failure(success, message)
+        )
+        self.session.changed.connect(self._remember_runtime_errors)
         self.network_timer = QTimer(self)
         self.network_timer.setInterval(5000)
         self.network_timer.timeout.connect(self._check_network_ip)
@@ -492,6 +507,10 @@ class MonitorizeBackend(QObject):
     def _remote_login_changed(self):
         if self._closing:
             return
+        error = self._remote_login.message if self._remote_login.status.get('state') in ('error', 'unavailable') else ""
+        if error and error != self._observed_remote_error:
+            self._remember_session_error(error)
+        self._observed_remote_error = error
         self.remoteLoginChanged.emit()
         self.sessionChanged.emit()
         self.streamingStatusChanged.emit(self.streamingStatus)
@@ -706,6 +725,53 @@ class MonitorizeBackend(QObject):
     @pyqtProperty(str, notify=streamingStatusChanged)
     def streamingStatus(self):
         return self.remoteLoginMessage if getattr(self, "remoteLoginEnabled", False) else self.streaming.status
+
+    @pyqtProperty(str, notify=sessionErrorChanged)
+    def sessionError(self):
+        return "\n\n".join(self._session_errors)
+
+    def _remember_session_error(self, message):
+        if not isinstance(message, str) or not message.strip():
+            return
+        message = message.strip()
+        if message not in self._session_errors:
+            self._session_errors.append(message)
+            self.sessionErrorChanged.emit()
+
+    def _remember_session_failure(self, success, message):
+        if not success:
+            self._remember_session_error(message)
+
+    def _remember_streaming_failure(self):
+        self._remember_session_error(self.streaming.status or "Failed to start stream. See the session logs for details.")
+
+    def _remember_codec_failure(self, message):
+        detail = self.streaming.status
+        self._remember_session_error(detail if isinstance(detail, str) and message in detail else message)
+
+    def _remember_runtime_errors(self):
+        runtime = self.session.client_runtime
+        errors = set()
+        if runtime:
+            for slot in runtime.slots.values():
+                if isinstance(slot.error, str) and slot.error:
+                    errors.add(slot.error)
+            for message in sorted(errors - self._observed_runtime_errors):
+                self._remember_session_error(message)
+        self._observed_runtime_errors = errors
+
+    @pyqtSlot()
+    def dismissSessionError(self):
+        if self._session_errors:
+            self._session_errors.clear()
+            self.sessionErrorChanged.emit()
+
+    @pyqtSlot(result=bool)
+    def copySessionError(self):
+        if not self.sessionError or not isinstance(QGuiApplication.instance(), QGuiApplication):
+            return False
+        QGuiApplication.clipboard().setText(self.sessionError)
+        return True
 
     @pyqtProperty(bool, notify=secondStreamActiveChanged)
     def secondStreamActive(self):

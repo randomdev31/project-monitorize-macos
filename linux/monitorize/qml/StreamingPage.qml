@@ -96,6 +96,38 @@ Item {
                 }
             }
             SectionCard {
+                objectName: "sessionErrorCard"
+                title: "SESSION ERRORS"
+                visible: backend.sessionError.length > 0
+                Layout.fillWidth: true
+                TextArea {
+                    objectName: "sessionErrorText"
+                    text: backend.sessionError
+                    textFormat: TextEdit.PlainText
+                    readOnly: true
+                    selectByMouse: true
+                    activeFocusOnPress: true
+                    wrapMode: TextEdit.Wrap
+                    color: theme.errorText
+                    Layout.fillWidth: true
+                    background: Item {}
+                }
+                RowLayout {
+                    CustomButton {
+                        objectName: "copySessionErrorButton"
+                        text: "Copy details"
+                        primary: false
+                        onClicked: backend.copySessionError()
+                    }
+                    CustomButton {
+                        objectName: "dismissSessionErrorButton"
+                        text: "Dismiss"
+                        primary: false
+                        onClicked: backend.dismissSessionError()
+                    }
+                }
+            }
+            SectionCard {
                 objectName: "remoteLoginCard"
                 title: "REMOTE LOGIN"; symbol: "session"
                 visible: backend.remoteLoginEnabled
