@@ -9,14 +9,3 @@
 +    if (!force_non_h264 && video::last_encoder_probe_supported_yuv444_for_codec[0]) {
        codec_mode_flags |= SCM_H264_HIGH8_444;
      }
---- a/src/rtsp.cpp
-+++ b/src/rtsp.cpp
-@@ -1277,5 +1277,6 @@
- 
--    const auto forced_video_format = config::video.av1_mode >= 2 ? 2 :
-+    const bool force_h264 = config::video.hevc_mode == 1 && config::video.av1_mode == 1;
-+    const auto forced_video_format = config::video.av1_mode >= 2 ? 2 :
-                                       config::video.hevc_mode >= 2 ? 1 :
--                                                                          -1;
-+                                      force_h264 ? 0 : -1;
-     if (forced_video_format >= 0 && config.monitor.videoFormat != forced_video_format) {

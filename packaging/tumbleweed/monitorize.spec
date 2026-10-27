@@ -1,9 +1,9 @@
-%global sunshine_commit 8d043f2b929705a4f6bad30d1e7f700a2de607b6
+%global sunshine_commit 95c4130c88eaf0bb84036b757e617748624a4c5e
 %global cuda_version 12.9.1
 %global cuda_build 575.57.08
 %global cuda_sha256 0f6d806ddd87230d2adbe8a6006a9d20144fdbda9de2d6acc677daa5d036417a
-%global sunshine_ffmpeg_tag v2026.910.121303
-%global sunshine_ffmpeg_sha256 496d2bbb674d01e6033e31b9dfc15cbc9dc1494e882a4505f6ab1e03f75b385c
+%global sunshine_ffmpeg_tag v2026.1017.131201
+%global sunshine_ffmpeg_sha256 b2de5119cb0ab89cb6038acb75299b213f97a0c79d34557068add639511f8815
 %global cuda_libxml2_sha256 56637a1b406c68da030032da1191a063bf56df7fd4f99ec2ae4ec6431bf1ee4f
 %bcond_without cuda
 %global _firewalld_dir %{_prefix}/lib/firewalld
@@ -123,9 +123,6 @@ python3 packaging/common/check-client-display-protocol.py external/sunshine
 patch --batch --forward -d external/sunshine -p1 < packaging/sunshine-strict-selection.patch
 mkdir .ffmpeg-prepared
 tar -xzf %{SOURCE1} -C .ffmpeg-prepared --strip-components=1 --no-same-owner
-# Tumbleweed can ship a newer compatible Boost than Sunshine's exact request.
-sed -i 's/find_package(Boost CONFIG ${BOOST_VERSION} EXACT /find_package(Boost CONFIG ${BOOST_VERSION} /' \
-    external/sunshine/cmake/dependencies/Boost_Sunshine.cmake
 
 %build
 %if %{with cuda}

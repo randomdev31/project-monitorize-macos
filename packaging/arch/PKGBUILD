@@ -11,7 +11,7 @@ license=('GPL-3.0-only')
 install=monitorize.install
 options=('!debug')
 
-_boost_version=1.89.0
+_boost_version=1.92.0
 _python_minor="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 _python_next_minor="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor + 1}")')"
 depends=("${monitorize_runtime_deps[@]}" "python>=${_python_minor}" "python<${_python_next_minor}")
@@ -54,9 +54,6 @@ prepare() {
     test -f .ffmpeg-prepared/lib/libavcodec.a
     test -f .boost-prepared/CMakeLists.txt
 
-    # Sunshine requests Boost 1.89 EXACT; Arch can provide a newer compatible one.
-    sed -i 's/find_package(Boost CONFIG ${BOOST_VERSION} EXACT /find_package(Boost CONFIG ${BOOST_VERSION} /' \
-        external/sunshine/cmake/dependencies/Boost_Sunshine.cmake
 }
 
 build() {

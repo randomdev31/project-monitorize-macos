@@ -911,7 +911,7 @@ def pair_moonlight_pin(pin: str, name: str = "Monitorize Display", instance: int
         tuple[bool, str]: (success, status_message)
     """
     clean_pin = str(pin or "").strip()
-    if not (len(clean_pin) == 4 and clean_pin.isdigit()):
+    if not (len(clean_pin) == 4 and clean_pin.isascii() and clean_pin.isdigit()):
         return False, "PIN must be exactly 4 digits."
 
     import json
@@ -922,7 +922,7 @@ def pair_moonlight_pin(pin: str, name: str = "Monitorize Display", instance: int
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
 
-    payload = json.dumps({"pin": clean_pin, "name": name}).encode("utf-8")
+    base_payload = {"pin": clean_pin, "name": name}
 
     if instance is not None and str(instance).isdigit() and int(instance) in (1, 2):
         inst_num = int(instance)
@@ -935,14 +935,41 @@ def pair_moonlight_pin(pin: str, name: str = "Monitorize Display", instance: int
         if not is_sunshine_running(inst):
             continue
         url = get_sunshine_web_url(inst)
-        req = urllib.request.Request(
-            f"{url}/api/pin",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-
         try:
+            payload = dict(base_payload)
+            pending_request = urllib.request.Request(f"{url}/api/pin", method="GET")
+            try:
+                with urllib.request.urlopen(pending_request, context=ctx, timeout=5.0) as response:
+                    pending_body = json.loads(response.read().decode("utf-8"))
+                pending = pending_body.get("pairings")
+                if not isinstance(pending, list):
+                    return False, "Sunshine returned an invalid pairing response. Try Sunshine settings."
+                if not pending:
+                    last_error = "No clients are waiting to pair. Request a PIN in Moonlight and try again."
+                    continue
+                if len(pending) != 1:
+                    return False, (
+                        f"Several clients are waiting on Display {inst}. "
+                        "Open Sunshine settings → PIN and choose the client there."
+                    )
+                pairing_id = pending[0].get("id") if isinstance(pending[0], dict) else None
+                if not (isinstance(pairing_id, str) and len(pairing_id) == 32
+                        and all(c in "0123456789abcdefABCDEF" for c in pairing_id)):
+                    return False, "Sunshine returned an invalid pairing request. Request a new PIN in Moonlight."
+                payload["pairing_id"] = pairing_id
+            except urllib.error.HTTPError as exc:
+                if exc.code not in (404, 405):
+                    raise
+                exc.close()
+                # Keep the existing completed-handshake contract with older
+                # Monitorize engines that do not expose pending-request IDs.
+
+            req = urllib.request.Request(
+                f"{url}/api/pin",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
             with urllib.request.urlopen(req, context=ctx, timeout=15.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 if data.get("status") is True:

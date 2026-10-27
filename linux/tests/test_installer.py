@@ -49,10 +49,13 @@ class SunshineOnlyPackagingTest(unittest.TestCase):
             "MONITORIZE_STRICT_CODEC_REJECTED",
             (ROOT / "external/sunshine/src/rtsp.cpp").read_text(),
         )
+        rtsp_source = (ROOT / "external/sunshine/src/rtsp.cpp").read_text()
         self.assertIn(
-            "config::video.hevc_mode == 1 && config::video.av1_mode == 1",
-            patch_text,
+            "listener_codec::accepts(config.monitor.videoFormat, config::video.hevc_mode, config::video.av1_mode)",
+            rtsp_source,
         )
+        policy = (ROOT / "external/sunshine/src/listener_codec_policy.h").read_text()
+        self.assertIn("(hevc == 1 && av1 == 1) ? 0 : -1", policy)
 
     @staticmethod
     def write_executable(path, content):
@@ -552,7 +555,9 @@ exit 0
     def test_nix_closure_has_no_monitorize_gstreamer_or_adb_runtime(self):
         package = (ROOT / "nix/package.nix").read_text()
         self.assertIn("monitorizeSunshine", package)
-        self.assertIn('COMMIT = "8d043f2b929705a4f6bad30d1e7f700a2de607b6";', package)
+        sources = (ROOT / "packaging/arch/sources.conf").read_text()
+        source_pin = re.search(r"^SUNSHINE_COMMIT=([a-f0-9]{40})$", sources, re.MULTILINE).group(1)
+        self.assertIn(f'COMMIT = "{source_pin}";', package)
         self.assertIn('SUNSHINE_ENABLE_CUDA" cudaSupport', package)
         self.assertIn('SUNSHINE_ENABLE_VAAPI" true', package)
         self.assertNotIn("gst_all_1", package)

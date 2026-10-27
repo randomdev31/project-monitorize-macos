@@ -28,10 +28,25 @@ class FFmpegCacheTest(unittest.TestCase):
                 info = tarfile.TarInfo("ffmpeg/lib/libavcodec.a")
                 info.size = len(payload)
                 output.addfile(info, io.BytesIO(payload))
-            script = root / "test.cmake"
-            # Stub only Git discovery; exercise the actual cache and extraction code.
+                header = tarfile.TarInfo("ffmpeg/include/libavcodec/avcodec.h")
+                header.size = 0
+                output.addfile(header, io.BytesIO())
+            # Cache extraction is tested offline; host libva discovery is a separate
+            # configure dependency and must not require development packages here.
+            modules = root / "cmake"
+            modules.mkdir()
+            (modules / "FindLibva.cmake").write_text(f'''set(LIBVA_FOUND TRUE)
+set(LIBVA_LIB "{root}/host/libva.so")
+set(LIBVA_DRM_LIB "{root}/host/libva-drm.so")
+set(_libva_library_dir "{root}/host")
+''')
+            (root / "host").mkdir()
+            (root / "host/libva-x11.so").touch()
+            script = root / "CMakeLists.txt"
+            # Stub Git/tag discovery; exercise actual archive/cache/header staging.
             script.write_text(f'''cmake_minimum_required(VERSION 3.25)
-set(CMAKE_BINARY_DIR "{root}")
+project(FFmpegCache NONE)
+set(CMAKE_MODULE_PATH "{modules}")
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 function(execute_process)
@@ -43,13 +58,21 @@ endfunction()
 include("{FFMPEG_CMAKE}")
 file(WRITE "{root}/selected.txt" "${{FFMPEG_PREPARED_BINARIES}}")
 ''')
-            subprocess.run(["cmake", "-P", str(script)], check=True, capture_output=True)
+            configured = subprocess.run(
+                ["cmake", "-S", str(root), "-B", str(root)],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(0, configured.returncode, configured.stdout + configured.stderr)
             selected = Path((root / "selected.txt").read_text())
             self.assertEqual(payload, (selected / "lib/libavcodec.a").read_bytes())
             self.assertEqual("old API 13.1-only bundle", old.read_text())
             # Reconfiguration must reuse the release-specific extraction offline.
             archive.unlink()
-            subprocess.run(["cmake", "-P", str(script)], check=True, capture_output=True)
+            configured = subprocess.run(
+                ["cmake", "-S", str(root), "-B", str(root)],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(0, configured.returncode, configured.stdout + configured.stderr)
             self.assertEqual(payload, (selected / "lib/libavcodec.a").read_bytes())
 
 
