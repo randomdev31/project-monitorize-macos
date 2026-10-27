@@ -22,6 +22,7 @@ class DeliveryTests(unittest.TestCase):
                 'usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py',
                 'usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py',
                 'usr/lib/monitorize-remote-login/monitorize/remote_login/live_setup.py',
+                'usr/lib/monitorize-remote-login/monitorize/remote_login/package_lifecycle.py',
                 'usr/libexec/monitorize/remote-login/entry.py',
                 'usr/libexec/monitorize/remote-login/package-guard.py',
                 'usr/lib/systemd/system/monitorize-vkms-boot-display.service',

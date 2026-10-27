@@ -45,7 +45,7 @@ build_jobs="${MONITORIZE_BUILD_JOBS:-${cpu_count}}"
 
 cd "${PROJECT_ROOT}"
 for required_file in PKGBUILD dependencies.sh sources.conf container-prepare.sh container-build.sh \
-    smoke-test.sh monitorize.install monitorize-wrapper monitorize-remote-login-guard.hook; do
+    smoke-test.sh monitorize.install monitorize-wrapper monitorize-remote-login-guard.hook monitorize-remote-login-remove.hook; do
     git ls-files --error-unmatch "packaging/arch/${required_file}" >/dev/null 2>&1 \
         || die "Commit packaging/arch/${required_file} before building; the source snapshot uses HEAD."
 done
@@ -136,7 +136,7 @@ tar --sort=name --mtime="@${source_date_epoch}" --owner=0 --group=0 \
     | gzip -n > "${recipe_root}/monitorize-${version}.tar.gz"
 source_sha="$(sha256sum "${recipe_root}/monitorize-${version}.tar.gz" | awk '{print $1}')"
 
-for helper in PKGBUILD dependencies.sh monitorize.install monitorize-wrapper monitorize-remote-login-guard.hook; do
+for helper in PKGBUILD dependencies.sh monitorize.install monitorize-wrapper monitorize-remote-login-guard.hook monitorize-remote-login-remove.hook; do
     cp "${SCRIPT_DIR}/${helper}" "${recipe_root}/${helper}"
 done
 sed -i \

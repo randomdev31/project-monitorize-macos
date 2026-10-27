@@ -1,5 +1,8 @@
 """Authenticated-stream idle policy. Caller serializes request/expiry operations."""
 import time
+from pathlib import Path
+
+PACKAGE_RECEIPT = Path("/var/lib/monitorize/remote-login-package.json")
 
 
 class IdleDisplay:
@@ -28,6 +31,8 @@ class IdleDisplay:
             raise ValueError('Missing authenticated client/request identity.')
         key=(client,request)
         if operation=='prepare':
+            if PACKAGE_RECEIPT.exists():
+                raise RuntimeError('Remote login is paused for a package transaction; retry after maintenance completes.')
             if len(self.requests)>=64 and key not in self.requests:raise ValueError('Too many pending requests.')
             mode=None
             if self.prepare_mode is not None:
@@ -73,7 +78,7 @@ class IdleDisplay:
         if self.target is not None and self.deadline is None:self.schedule_cleanup()
     def health(self, *, listening, startup_error=''):
         error=startup_error or self.error or self.configuration_error
-        return dict(display_idle_timeout_seconds=self.timeout_seconds,listening=bool(listening),capture_ready=bool(listening and self.frames_ready and not error),
+        return dict(package_paused=PACKAGE_RECEIPT.exists(),package_busy=bool(self.requests or self.active),display_idle_timeout_seconds=self.timeout_seconds,listening=bool(listening),capture_ready=bool(listening and self.frames_ready and not error),
                     startup_error=error,state=self.state)
     @property
     def state(self):

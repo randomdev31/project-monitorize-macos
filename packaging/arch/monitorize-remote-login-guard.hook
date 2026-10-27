@@ -1,11 +1,10 @@
 [Trigger]
 Operation = Upgrade
-Operation = Remove
 Type = Package
 Target = monitorize
 
 [Action]
-Description = Checking Monitorize remote-login ownership before replacing app services
+Description = Preparing Monitorize remote login for upgrade
 When = PreTransaction
-Exec = /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py
+Exec = /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --prepare upgrade
 AbortOnFail

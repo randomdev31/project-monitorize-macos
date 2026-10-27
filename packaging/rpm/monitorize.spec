@@ -280,12 +280,12 @@ PYTHON
 
 %pretrans -p /bin/sh
 if [ -f /usr/libexec/monitorize/remote-login/package-guard.py ]; then
-    /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py || exit 1
+    /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --prepare upgrade || exit 1
 fi
 
 %preun
 if [ "$1" = 0 ] && [ -f /usr/libexec/monitorize/remote-login/package-guard.py ]; then
-    /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py || exit 1
+    /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --prepare remove || exit 1
 fi
 
 %pre
@@ -301,6 +301,12 @@ fi
 %postun
 %udev_rules_update
 %firewalld_reload
+
+
+%posttrans
+if [ -f /usr/libexec/monitorize/remote-login/package-guard.py ]; then
+    /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --resume || exit 1
+fi
 
 
 %files -f %{pyproject_files}

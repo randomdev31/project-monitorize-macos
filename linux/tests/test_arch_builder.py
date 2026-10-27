@@ -24,6 +24,7 @@ REQUIRED = (
     "monitorize.install",
     "monitorize-wrapper",
     "monitorize-remote-login-guard.hook",
+    "monitorize-remote-login-remove.hook",
 )
 
 

@@ -1,5 +1,45 @@
 # Remote login integration status
 
+## Native app upgrades and removal
+
+Arch, Fedora, openSUSE Tumbleweed, Debian Trixie and both Ubuntu targets share
+the app package lifecycle helper. Unused remote login passes silently. An idle
+enrollment is paused, its protected display is released, and its previous running
+state is restored after upgrade. Settings, startup enablement, pairing and manual
+Sunshine profiles are preserved. Existing administrator masks remain in place.
+
+An active client, pending launch or unverifiable engine state requires explicit
+disconnect approval. From a local terminal, prepare the transaction, then rerun
+the usual package command:
+
+```bash
+sudo /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --prepare upgrade --allow-disconnect
+```
+
+Use `--prepare remove --allow-disconnect` for removal. Removal stops the managed
+services, releases their reservation and disables remote-login startup; pairing
+and other saved settings remain. Preparing removal takes effect immediately,
+even if the subsequent package transaction is cancelled.
+
+Preparation uses the setup lock, a private root recovery receipt and temporary
+systemd masks. Runners refuse new launches during maintenance and acknowledge
+their idle state before automatic stopping; cgroup/identity and connector checks
+must pass before release. Cleanup failures block replacement with the concrete
+cause. Retry after fixing it, or recover an interrupted upgrade with:
+
+```bash
+sudo /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --resume
+```
+
+Post-upgrade recovery failures retain the receipt and report this same command;
+package files may already have been installed. After a reboot, `--resume` only
+clears expired maintenance and does not replay old masks or service state.
+
+Packages already installed with the old blocking guard may still require remote
+login disabled once to install this change: pre-upgrade scripts/hooks can execute
+the old installed helper. This change does not replace the separate VKMS host
+package's upgrade policy. Native binary/live desktop acceptance is still pending.
+
 ## Login-screen display policy
 
 The default captures the greeter's existing primary display. **Create virtual
@@ -46,8 +86,9 @@ The companion monitorize-vkms 0.3.0 development tree now implements boot-display
 on-demand greeter and idle-display protocol v1. Source bundles must include the
 matching host Python, executable copies, VERSION and capabilities manifest. Native
 host upgrades use the package manager; source installers and explicit rollback
-refuse package-owned files. Native replacements and explicit source rollback require
-disabled enrollment and a released protected display. Pairing is retained.
+refuse package-owned files. Native app replacements use the lifecycle above;
+separate host updates and explicit source rollback still require disabled
+enrollment and a released protected display. Pairing is retained.
 
 Remote login still requires live physical-screen GNOME/GDM acceptance and a separate
 headless test; installing compatible protocols is not that validation.

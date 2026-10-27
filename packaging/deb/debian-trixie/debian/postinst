@@ -10,6 +10,10 @@ case "$1" in
         udevadm trigger --subsystem-match=misc --sysname-match=uinput >/dev/null 2>&1 || true
         modprobe uinput >/dev/null 2>&1 || true
         setcap cap_sys_admin,cap_sys_nice+p /usr/libexec/monitorize/sunshine
+        /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --resume
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --resume
         ;;
 esac
 

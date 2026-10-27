@@ -1,10 +1,11 @@
 #!/bin/sh
 set -e
 case "$1" in
-    remove|deconfigure|upgrade)
-        if [ -f /usr/libexec/monitorize/remote-login/package-guard.py ]; then
-            /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py
-        fi
-        ;;
+    upgrade|deconfigure) operation=upgrade ;;
+    remove) operation=remove ;;
+    *) exit 0 ;;
 esac
+if [ -f /usr/libexec/monitorize/remote-login/package-guard.py ]; then
+    /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --prepare "$operation"
+fi
 #DEBHELPER#

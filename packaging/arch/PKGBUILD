@@ -163,6 +163,8 @@ package() {
     python packaging/remote-login/install-assets.py --destdir "${pkgdir}"
     install -Dpm 0644 "${startdir}/monitorize-remote-login-guard.hook" \
         "${pkgdir}/usr/share/libalpm/hooks/monitorize-remote-login-guard.hook"
+    install -Dpm 0644 "${startdir}/monitorize-remote-login-remove.hook" \
+        "${pkgdir}/usr/share/libalpm/hooks/monitorize-remote-login-remove.hook"
 
     install -Dpm 0755 "${startdir}/monitorize-wrapper" \
         "${pkgdir}/usr/bin/monitorize"

@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Remove
+Type = Package
+Target = monitorize
+
+[Action]
+Description = Preparing Monitorize remote login for removal
+When = PreTransaction
+Exec = /usr/bin/python3 -I /usr/libexec/monitorize/remote-login/package-guard.py --prepare remove
+AbortOnFail
