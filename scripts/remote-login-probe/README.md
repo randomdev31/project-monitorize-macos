@@ -1,6 +1,5 @@
 # Remote-login experiment: first prove boot VKMS output
 
-This is stage 1 of `docs/superpowers/plans/2026-10-19-remote-login.md`.
 It is an experimental probe, not the finished remote-login feature. It does not
 start Sunshine before login, change pairing, set up handoff or enable headless
 support in Settings. No probe is installed automatically.

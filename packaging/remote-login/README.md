@@ -33,9 +33,7 @@ lock. Retry preserves identity; healthy retry preserves the current D-Bus owner.
 Only masks recorded by a versioned fallback grant, including prior enablement,
 are automatically removed before unit enablement. Custom/ambiguous masks are refused.
 
-Use `docs/REMOTE_LOGIN_ACCEPTANCE.md` for current source paths, staging, deployment
-boundaries and the physical-screen/GDM/SDDM/headless acceptance matrix. Native
-package-owned files need native upgrades; source asset deployment refuses to
+Native package-owned files need native upgrades; source asset deployment refuses to
 replace them. Source tests pass for the new path; real desktop validation is pending.
 
 The remaining dated sections are historical deployment records. Their next-boot-
@@ -52,8 +50,7 @@ refuse package-owned files. Native replacements and explicit source rollback req
 disabled enrollment and a released protected display. Pairing is retained.
 
 Remote login still requires live physical-screen GNOME/GDM acceptance and a separate
-headless test; installing compatible protocols is not that validation. See
-`docs/REMOTE_LOGIN_ACCEPTANCE.md` for current evidence and deployment instructions.
+headless test; installing compatible protocols is not that validation.
 Native app builders include service assets and an optional monitorize-vkms >=0.3.0
 dependency. Portable binaries require companion native system packages and explicit
 administrator enrollment through Settings. No package install enables the feature.
