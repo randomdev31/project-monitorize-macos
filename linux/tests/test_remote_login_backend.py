@@ -63,6 +63,28 @@ with tempfile.TemporaryDirectory() as d:
             backend._remote_login.status={'state':'unavailable','capture_ready':False}
             backend._remote_login.changed.emit();settle()
             assert backend.remoteLoginEnabled and not backend.isStreaming and not backend.sessionRunning and not backend.sessionBusy
+            # A successful privileged handoff must be consumed before normal
+            # Mirror startup. Invalid grants must leave the remote runtime intact.
+            runtime=backend._remote_login
+            backend._desktop_fallback_generation=7
+            result=dict(success=True,generation=7,action='start')
+            from types import SimpleNamespace
+            with patch('monitorize.remote_login.settings.read_settings',return_value=SimpleNamespace(enabled=True)), \
+                 patch('monitorize.platform.remote_login_identity.desktop_fallback_allowed',return_value=False), \
+                 patch.object(backend,'_reconcile_desktop_configuration') as reconcile, \
+                 patch.object(backend,'startSession') as normal_start:
+                backend._finish_desktop_fallback(result)
+                assert backend.remoteLoginEnabled and backend._remote_login is runtime
+                assert 'close' not in runtime.calls
+                reconcile.assert_not_called();normal_start.assert_not_called()
+            with patch('monitorize.remote_login.settings.read_settings',return_value=SimpleNamespace(enabled=True)), \
+                 patch('monitorize.platform.remote_login_identity.desktop_fallback_allowed',return_value=True), \
+                 patch.object(backend,'_reconcile_desktop_configuration',return_value='') as reconcile, \
+                 patch.object(backend,'startSession') as normal_start:
+                backend._finish_desktop_fallback(result)
+                assert backend._desktop_fallback and not backend.remoteLoginEnabled
+                assert runtime.calls[-1]=='close'
+                reconcile.assert_called_once();normal_start.assert_called_once()
             print('Remote desktop Start/Stop, QML, and duplicate-launch guards passed')
         finally:
             view.setSource(QUrl());view.close();backend.close();app.processEvents()

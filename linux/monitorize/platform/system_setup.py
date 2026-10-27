@@ -166,7 +166,10 @@ def remote_login_setup_status():
 
 def apply_remote_login_setup(enabled):
     status=remote_login_setup_status()
-    if not status['available']:return {'success':False,'message':status['message']}
+    # Compatibility is an enablement requirement. The installed root disable
+    # action authenticates the enrolled owner and must remain a recovery path
+    # when the host is missing, mixed or too old for new enrollment.
+    if enabled and not status['available']:return {'success':False,'message':status['message']}
     if enabled and not status.get('live_available'):
         return {'success':False,'configured':bool(status.get('enabled')),'message':status.get('live_message','Install live-enrollment service updates first.')}
     pkexec=shutil.which('pkexec')

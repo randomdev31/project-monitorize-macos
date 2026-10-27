@@ -40,6 +40,26 @@ login disabled once to install this change: pre-upgrade scripts/hooks can execut
 the old installed helper. This change does not replace the separate VKMS host
 package's upgrade policy. Native binary/live desktop acceptance is still pending.
 
+### Recovery from an incompatible-host setup deadlock
+
+Disabling an existing enrollment is independent of host compatibility for new
+enrollment. The checked boot option remains switchable even when host readiness
+fails or normal login startup is unchecked; the root disable action still
+authenticates the enrolled account. If an older installed GUI blocks disablement,
+stop the stream and use its installed administrator helper from a local terminal:
+
+```bash
+pkexec /usr/libexec/monitorize/monitorize-system-setup --remote-login disable
+```
+
+Pairing is retained. A partial result means boot startup was disabled but protected
+display cleanup still needs attention; keep that result rather than deleting
+ownership state. Release versions use `MAJOR.MINOR[.PATCH]`: `1.0` is valid, and
+`0.3` has the same compatibility floor as `0.3.0`. Protocol and matching-helper
+checks still apply. The companion source installer/host package upgrades now use
+their upgrade gate; removal, unsupported versions and actual downgrades retain
+their ownership guard.
+
 ## Login-screen display policy
 
 The default captures the greeter's existing primary display. **Create virtual

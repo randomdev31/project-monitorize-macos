@@ -180,7 +180,7 @@ Item {
                         keepCheckedBlue: true
                         id: bootCheck; objectName: "bootStartupCheck"; text: "Also start at boot (login screen)"
                         Layout.fillWidth: false
-                        enabled: autostartCheck.checked && !backend.remoteLoginSetupBusy && page.bootStatus.available && (page.bootStatus.enabled || (page.bootStatus.supported && page.bootStatus.live_available === true))
+                        enabled: !backend.remoteLoginSetupBusy && (page.bootStatus.enabled || (autostartCheck.checked && page.bootStatus.available && page.bootStatus.supported && page.bootStatus.live_available === true))
                         onClicked: {
                             page.loginAfterBootDisable = checked ? -1 : 1
                             backend.configureRemoteLogin(checked)

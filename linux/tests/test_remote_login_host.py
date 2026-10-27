@@ -75,6 +75,16 @@ class HostReadinessTests(unittest.TestCase):
         self.file('usr/libexec/monitorize-vkms/monitorize-vkms-helper',b'old code')
         self.assertEqual(self.result()['reason'],'host_incomplete')
 
+    def test_two_and_three_component_release_versions_share_the_same_floor(self):
+        self.assets();self.host()
+        self.file('usr/libexec/monitorize/sunshine',b'\x7fELF\0MONITORIZE_CONTROL_PROTOCOL=1\0MONITORIZE_STRICT_KMS_OUTPUT_MISSING\0')
+        for version, expected in (('1.0', True), ('1.0.0', True), ('0.3', True), ('0.3.0', True),
+                                  ('0.2', False), ('1', False), ('1.0.0.0', False), ('1.0rc1', False)):
+            with self.subTest(version=version):
+                self.file('usr/lib/monitorize-vkms/VERSION', (version+'\n').encode())
+                self.manifest['version']=version;self.write_manifest()
+                self.assertEqual(self.result()['available'], expected)
+
     def test_malformed_writable_or_symlinked_manifest_is_unavailable(self):
         self.assets();self.host()
         path=self.file('usr/share/monitorize-vkms/capabilities.json',b'not json')

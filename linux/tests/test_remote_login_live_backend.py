@@ -178,3 +178,19 @@ class PauseTests(unittest.TestCase):
         self.runtime.pause_idle_for_enrollment()
         with self.assertRaisesRegex(ValueError,'setup'):
             self.runtime._request(None,dict(operation='prepare'))
+
+
+class DisableCompatibilityRecoveryTests(unittest.TestCase):
+    def test_incompatible_host_blocks_enable_but_not_authenticated_disable(self):
+        from monitorize.platform import system_setup
+        status = dict(available=False, live_available=False, enabled=True, message='Upgrade host')
+        with patch.object(system_setup, 'remote_login_setup_status', return_value=status), \
+             patch.object(system_setup.shutil, 'which', return_value='/usr/bin/pkexec'), \
+             patch.object(system_setup.subprocess, 'run') as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = '{"success": true}'
+            run.return_value.stderr = ''
+            self.assertFalse(system_setup.apply_remote_login_setup(True)['success'])
+            run.assert_not_called()
+            self.assertTrue(system_setup.apply_remote_login_setup(False)['success'])
+            self.assertEqual(run.call_args.args[0][-2:], ['--remote-login', 'disable'])

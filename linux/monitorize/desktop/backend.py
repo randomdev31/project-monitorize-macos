@@ -576,6 +576,19 @@ class MonitorizeBackend(QObject):
             self.configurationApplyFinished.emit(False,result.get('message','Could not release boot-service ownership.'))
             self.sessionChanged.emit()
             return
+        # A successful helper reply is not permission to bypass Sunshine's
+        # independent ownership guard. Verify the same boot/session grant before
+        # changing the UI runtime or starting an ordinary Mirror/Extend listener.
+        try:
+            from monitorize.remote_login.settings import read_settings
+            from monitorize.platform.remote_login_identity import desktop_fallback_allowed
+            settings=read_settings()
+            if settings.enabled and not desktop_fallback_allowed(settings):
+                raise RuntimeError('Desktop handoff permission could not be verified for this login. Refresh remote-login setup and retry; normal streaming was not started.')
+        except (OSError,ValueError,RuntimeError) as error:
+            self.configurationApplyFinished.emit(False,str(error))
+            self.sessionChanged.emit()
+            return
         # Enrollment remains on disk; only this desktop uses ordinary hosting.
         self._desktop_fallback=True
         self._remote_login.close()

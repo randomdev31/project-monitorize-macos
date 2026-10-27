@@ -157,6 +157,16 @@ with tempfile.TemporaryDirectory() as d:
                 save.assert_called_once_with(5)
                 assert timeout.property('value')==60 and prop('timeoutNotice')=='Cancelled'
                 assert backend._remote_login is runtime
+            # An enrolled boot option remains switchable with an incompatible host
+            # and even when normal login startup is currently unchecked.
+            previous_status=dict(status.return_value);previous_login=login_state[0]
+            status.return_value={'available':False,'live_available':False,'enabled':True,'supported':False,'message':'Upgrade host'}
+            login_state[0]=False
+            backend.remoteLoginSetupChanged.emit();settle()
+            assert boot.property('checked') and boot.property('enabled')
+            status.return_value=previous_status
+            login_state[0]=previous_login
+            backend.remoteLoginSetupChanged.emit();settle()
             # Cancelling parent disable keeps both options selected.
             with patch('monitorize.platform.system_setup.apply_remote_login_setup',return_value={'success':False,'message':'Cancelled'}) as disable:
                 login.setProperty('checked',False)

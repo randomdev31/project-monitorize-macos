@@ -67,8 +67,8 @@ def host_readiness(root=Path('/'), *, owner_uid=0, require_live=False) -> dict:
                       greeter_on_demand=_constant(boot,'GREETER_ON_DEMAND_PROTOCOL'),
                       idle_display=_constant(boot,'IDLE_DISPLAY_PROTOCOL'))
         if (type(manifest.get('schema_version')) is not int or manifest['schema_version']!=1
-            or manifest.get('version')!=version or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',version)
-            or tuple(map(int,version.split('.')))<(0,3,0) or not isinstance(protocols,dict)
+            or manifest.get('version')!=version or not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?',version)
+            or (tuple(map(int,version.split('.')))+(0,))[:3]<(0,3,0) or not isinstance(protocols,dict)
             or any(type(protocols.get(k)) is not int or protocols[k]!=v or declared[k]!=v for k,v in REQUIRED_PROTOCOLS.items())):
             raise ValueError()
     except (ValueError,TypeError,KeyError,SyntaxError):

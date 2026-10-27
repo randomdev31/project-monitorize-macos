@@ -155,8 +155,20 @@ def desktop_fallback_allowed(settings, *, owner_uid=0):
         fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
         with os.fdopen(fd) as stream:
             info=os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_uid!=owner_uid or info.st_mode & 0o022 or info.st_size>4096:return False
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=owner_uid or info.st_mode & 0o022 or info.st_nlink!=1 or info.st_size>4096:return False
             grant=json.load(stream)
+        if not isinstance(grant,dict) or type(grant.get('uid')) is not int:return False
+        identity_keys={'uid','session','boot_id'}
+        if set(grant)!=identity_keys:
+            if (set(grant)!=identity_keys|{'schema_version','unit_enablement','owned_runtime_masks'}
+                or type(grant.get('schema_version')) is not int or grant['schema_version']!=1):return False
+            names={'monitorize-remote-login.service',
+                   *(f'monitorize-remote-login-{phase}@{settings.uid}.service' for phase in ('boot','desktop'))}
+            enablement=grant['unit_enablement'];masks=grant['owned_runtime_masks']
+            if (not isinstance(enablement,dict) or set(enablement)!=names
+                or any(type(flag) is not bool for flag in enablement.values())
+                or not isinstance(masks,list) or any(not isinstance(name,str) or name not in names for name in masks)
+                or len(masks)!=len(set(masks))):return False
         boot,session=_fallback_context()
-        return bool(session and grant==dict(uid=settings.uid,session=session,boot_id=boot))
+        return bool(session and grant['uid']==settings.uid and grant['session']==session and grant['boot_id']==boot)
     except (OSError,ValueError,TypeError):return False

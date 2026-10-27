@@ -27,6 +27,36 @@ class FallbackGrantTests(unittest.TestCase):
             self.assertFalse(identity.desktop_fallback_allowed(SimpleNamespace(uid=os.getuid())))
             context.assert_not_called()
 
+    def test_versioned_recovery_metadata_preserves_scoped_manual_permission(self):
+        from monitorize.platform.sunshine_service import _enrolled_manual_identity
+        from monitorize.remote_login import settings as policy
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path=root/'grant.json';config=root/'config.json';config.write_text('{}')
+            uid=os.getuid();settings=SimpleNamespace(uid=uid,enabled=True,directory=root)
+            names=['monitorize-remote-login.service',f'monitorize-remote-login-boot@{uid}.service',
+                   f'monitorize-remote-login-desktop@{uid}.service']
+            grant=dict(schema_version=1,uid=uid,session='s1',boot_id='boot1',
+                       unit_enablement={name:name==names[0] for name in names},owned_runtime_masks=names)
+            path.write_text(json.dumps(grant));path.chmod(0o644)
+            with patch.object(identity,'fallback_grant_path',return_value=path), \
+                 patch.object(identity,'_fallback_context',return_value=('boot1','s1')), \
+                 patch.object(policy,'SETTINGS',config),patch.object(policy,'read_settings',return_value=settings), \
+                 patch.object(identity.os,'getuid',return_value=uid):
+                # Use a fixture-owned grant while exercising the real manual identity guard.
+                from functools import partial
+                validator=partial(identity.desktop_fallback_allowed,owner_uid=uid)
+                with patch.object(identity,'desktop_fallback_allowed',side_effect=validator):
+                    self.assertEqual(_enrolled_manual_identity(1),identity.identity_paths(root))
+                    with patch.object(identity,'_fallback_context',return_value=('boot1','different-login')):
+                        with self.assertRaisesRegex(RuntimeError,'Remote login owns'):_enrolled_manual_identity(1)
+                for changes in ({'schema_version':True},{'schema_version':2},{'uid':True},
+                                {'owned_runtime_masks':['display-manager.service']},
+                                {'unit_enablement':{names[0]:True}}, {'extra':'unexpected'}):
+                    with self.subTest(changes=changes):
+                        path.write_text(json.dumps(dict(grant,**changes)))
+                        self.assertFalse(identity.desktop_fallback_allowed(settings,owner_uid=uid))
+
+
 
 class FallbackHandoffTests(unittest.TestCase):
     def test_root_handoff_never_disables_boot_and_grants_only_after_release(self):
@@ -56,6 +86,13 @@ class FallbackHandoffTests(unittest.TestCase):
         self.assertEqual(grant['session'],'s1')
         self.assertTrue(grant['unit_enablement']['monitorize-remote-login.service'])
         self.assertFalse(grant['unit_enablement']['monitorize-remote-login-desktop@1000.service'])
+        # Feed the real privileged writer's result into the app-side reader.
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'grant.json';path.write_text(json.dumps(grant));path.chmod(0o644)
+            with patch.object(identity,'fallback_grant_path',return_value=path), \
+                 patch.object(identity,'_fallback_context',return_value=(grant['boot_id'],'s1')):
+                self.assertTrue(identity.desktop_fallback_allowed(settings,owner_uid=os.getuid()))
+
 
     def test_release_failure_never_publishes_fallback_permission(self):
         import sys
