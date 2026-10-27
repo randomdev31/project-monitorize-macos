@@ -37,6 +37,26 @@ class HostReadinessTests(unittest.TestCase):
 
     def result(self):return host_readiness(self.root,owner_uid=os.getuid())
 
+    def live(self):return host_readiness(self.root,owner_uid=os.getuid(),require_live=True)
+
+    def test_live_capability_requires_matching_host_and_installed_app_action(self):
+        self.assets();self.host()
+        self.file('usr/libexec/monitorize/sunshine',b'\x7fELF\0MONITORIZE_CONTROL_PROTOCOL=1\0MONITORIZE_STRICT_KMS_OUTPUT_MISSING\0')
+        self.assertTrue(self.result()['available'])
+        self.assertFalse(self.live()['available'])
+        self.manifest['remote_login_protocols']['live_enrollment']=1;self.write_manifest()
+        self.assertFalse(self.live()['available'], 'a manifest must not invent an implemented host API')
+        self.file('usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py',
+                  b'GREETER_ON_DEMAND_PROTOCOL = 1\nIDLE_DISPLAY_PROTOCOL = 1\nLIVE_ENROLLMENT_PROTOCOL = 1\n')
+        self.assertFalse(self.live()['available'], 'old installed app assets must not enable live setup')
+        self.file('usr/lib/monitorize-remote-login/monitorize/remote_login/live_setup.py',b'LIVE_ENROLLMENT_PROTOCOL = 1\n')
+        self.file('usr/libexec/monitorize/remote-login/entry.py',b"action = 'setup-enable-live'\n")
+        self.file('usr/libexec/monitorize/monitorize-system-setup',b"action = 'enable-live'\n")
+        self.assertTrue(self.live()['available'])
+        self.assertTrue(self.result()['available'])
+        self.file('usr/lib/monitorize-remote-login/monitorize/remote_login/live_setup.py',b'LIVE_ENROLLMENT_PROTOCOL = 0\n')
+        self.assertFalse(self.live()['available'])
+
     def test_explains_missing_assets_host_and_incomplete_installation(self):
         self.assertEqual(self.result()['reason'],'missing_assets')
         self.assets();self.assertEqual(self.result()['reason'],'host_missing')

@@ -302,6 +302,14 @@ Item {
                 }
                 CustomButton { Layout.fillWidth: true; text: "Display Settings"; primary: false; visible: backend.canConfigureDisplay; onClicked: backend.configureDisplay() }
             }
+            Text {
+                objectName: "savedConfigurationRestartNotice"
+                text: "Changes saved. Restart streaming to apply."
+                visible: backend.configurationRestartRequired
+                color: theme.textSecondary
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
             TextEdit {
                 text: backend.sunshineSettingsMessage
                 visible: text.length > 0

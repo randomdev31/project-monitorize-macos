@@ -1,5 +1,117 @@
 # Remote-login host implementation and acceptance record
 
+## Login-screen physical-display default — 25 October 2026
+
+Installed source sample now uses **Create virtual display at login**, unchecked by
+default, without extra checkbox help text. Missing positive setting migrates both
+legacy `login_primary_display` choices to physical capture. The new
+`create_login_virtual_display` boolean preserves later explicit opt-ins. Enrollment,
+disable/re-enable and settings writes preserve that new choice; old primary CLI
+commands remain inverse compatibility aliases. Saving this preference retains its
+existing next-boot timing and does not interrupt a desktop stream.
+
+Unchecked login capture selects an existing primary output read-only: GDM/Mutter,
+Plasma Login Manager/KWin and SDDM/KWin adapters verify greeter session, compositor
+owner, mode and one enabled exact DRM connector, with repeated ownership/target
+checks. KWin queries run as the greeter using trusted kscreen-doctor JSON. No enabled
+primary or unsupported compositor is an error, with no silent virtual-display
+fallback. Other SDDM compositor virtual paths remain available through the checkbox.
+The protected mon1 reservation stays disconnected during physical login; desktop
+adoption and on-demand desktop activation remain unchanged. Physical idle cleanup
+never changes/disconnects the physical output. Checked login mode keeps fixed-mode
+virtual greeter activation and cleanup.
+
+Installed `LOGIN_DISPLAY_POLICY_PROTOCOL=1` in both policy modules and fixed
+`login-virtual-on/off` wrapper/entry actions gate the new checkbox. Bundle validation
+rejects incomplete policy/action updates. Root service files match the staged bundle.
+The reopened sample GUI verifies the new label, unchecked/enabled state and ready
+policy capability; its desktop listener remains owned, healthy and idle with both
+virtual connectors disconnected. Read-only desktop query selected eDP-1 at
+2560×1600@165.002. This is selector evidence, not greeter streaming acceptance.
+
+Rollback asset backup:
+`/var/lib/monitorize/remote-login-deployments/9a731caece033284b53209fee2df3fa7`.
+Final source bundle: `/tmp/monitorize-login-primary-default-assets-validated-20261025`.
+Live GUI evidence: `/tmp/monitorize-login-display-policy-sample.log`.
+Only feature services and the idle sample GUI were restarted for this deployment.
+Boot ID, session3 and display-manager PID1819 remained unchanged; no logout/reboot,
+kernel reload, commit or push. Actual physical greeter video/input → login → desktop
+reconnect and checked headless login still need separate live acceptance. Existing
+Moonlight desktop success from the preceding test does not establish those results.
+
+## Live enrollment source update (2026-10-25)
+
+Implemented in the isolated app and host worktrees listed below; installation and
+physical-screen acceptance are pending. On a compatible already-loaded VKMS host,
+Settings enables remote login immediately: pause only an owned idle Display 1,
+save enrollment, reserve disconnected mon1 in the authenticated current desktop,
+start the boot dependency and supervisor, and let the existing GUI participant
+adopt it. Success waits for verified listener ownership, without requiring capture
+frames before a client connects. No reboot, logout, GUI relaunch or display-manager
+restart is part of this enrollment path. First kernel/topology installation still
+requires the host's normal initialization procedure.
+
+The host manifest, host boot module and installed app service must all advertise
+`live_enrollment=1`. Old installed assets offer an update message rather than
+silently using next-boot setup. Active streams and any Display 2 listener block
+setup. Saved display/codec/Auto settings and pairing remain intact. The reservation
+keeps the existing fixed remote-login mode; this change does not add client-requested
+resolution negotiation to the greeter.
+
+Root setup is serialized and keeps a private recovery receipt. Retry reuses its
+identity and reservation, reconciles interrupted service starts, and preserves a
+healthy authenticated GUI participant. Only versioned feature-owned runtime masks
+with recorded prior enablement can be recovered automatically. Custom or legacy
+ambiguous masks require explicit recovery. Failed recovery retains its receipt
+and reports partial setup; successful rollback reports the restored enrollment.
+
+Source pair:
+
+- App: `/home/vinnavan/.codex/worktrees/live-remote-login/Monitorize-testing`.
+- Host: `/home/vinnavan/user/MegaProjects/.monitorize-live-enrollment-vkms`.
+- Validated staged bundle: `/tmp/monitorize-live-remote-login-assets-final-20261025`.
+
+Deployment is a separate administrator operation. Package-owned files require a
+native package upgrade; the source installer refuses to overwrite them. Source-
+managed files use the reviewed asset transaction and its printed rollback command.
+Disable enrollment and release its reservation before replacing enrolled assets.
+Keep pairing data. Do not run old experiment/identity restoration commands from
+historical sections below against a newly paired shared identity.
+
+### Source verification for this update
+
+- Host full suite: 260 pass.
+- App remote-login suite with the companion host fixture configured: 222 pass.
+- App full suite: 878 tests, 7 failures and 3 errors. The same failures/errors
+  reproduce on the original checkout (which also has one stale timeout assertion
+  corrected in this worktree). No new full-suite failure remains. Logs and the
+  original baseline comparison are in the execution ledger directory.
+- Final bundle validates under `python3 -I`; 62 staged Python files parse.
+- Isolated `systemd-analyze verify` passes using temporary dependencies.
+- Native file staging, new module/action and additive manifest are checked;
+  native binary/package builds and installation were not run.
+
+### Live acceptance record
+
+Record installed app/host versions, kernel, compositor/display-manager versions,
+GPU, physical/headless mode and journal evidence for each run. Nothing in this
+source update has been installed or exercised against a live desktop.
+
+| Scenario | Passing criterion | Current result |
+| --- | --- | --- |
+| Plasma with physical screen, idle enable | Same GUI and session; listener owned and reachable; no active VD or restart | Pending live run |
+| Moonlight connect, disconnect, reconnect | Exact reserved output activates; video/input work; idle timeout disconnects it; same paired PC reconnects | Pending live run |
+| Logout → greeter → login → reconnect | Existing reconnect handoff works, greeter stays on demand | Pending live run |
+| Disable → enable again, owned fallback masks | No restart; exact ownership recovered; administrator masks preserved | Fixture checks pass; live pending |
+| Stop/Quit during setup; authorization failure | No unintended listener resurrection; accurate saved/partial status; safe retry | Fixture checks pass; live pending |
+| Deliberate later reboot | Fresh boot reservation/listener uses persisted enrollment | Existing boot regression suite passes; live pending |
+| GDM and SDDM, physical screen then headless | Repeat the entire cycle separately for each manager | Pending separate runs |
+
+Mark PASS only with observed behavior and evidence. FAIL means an observed
+criterion failed. BLOCKED means missing compatible assets, greeter, or required
+hardware. INCONCLUSIVE means incomplete or ambiguous evidence. Fixture success
+alone does not establish compositor, GPU or headless stability.
+
 Date: 2026-10-23. Code implemented and reviewed; live installation/boot acceptance pending.
 
 ## Installation update (2026-10-23)
@@ -165,3 +277,74 @@ silently connect an always-on VD. Each other display manager needs its own cycle
 Do not collect key/certificate files or copy pairing identity into test reports.
 Use system/user service journals for diagnostics. DEB/RPM and native app release
 acceptance remain separate work on matching build/install environments.
+
+
+## 25 October 2026 — installed Fedora Plasma sample acceptance
+
+User authorized sample installation and testing without commits. Installed the
+validated source-managed app-service and VKMS userspace bundle through desktop
+Polkit authentication. Existing source checkouts and running kernel were preserved.
+Feature services were stopped for asset replacement and restored; no PC reboot,
+logout, display-manager restart or kernel reload occurred. All 62 installed service
+Python files match the staged bundle. Installed live readiness reports ready.
+
+Rollback asset backup:
+`/var/lib/monitorize/remote-login-deployments/5ddb4e8165b5f25bffc48ded83a91e0d`.
+Use the source installer's printed rollback command only after disabling enrollment,
+releasing the reservation and stopping feature engines; pairing remains authoritative.
+
+Actual Qt backend test in the visible sample GUI:
+- Disable succeeded with reboot_required=false and enabled=false.
+- Live enable succeeded with activated=true, configured=true and reboot_required=false.
+- Repeated enable succeeded with reused=true and the same authenticated participant.
+- Session 3 and boot bec34a9f-af17-4727-b299-cba26127eb84 were unchanged.
+- Root receipt reached complete; protected lease belongs to UID1000/session3/desktop.
+- Idle: both VKMS connectors disconnected, physical eDP-1 remained enabled.
+- User confirmed Moonlight video and keyboard/mouse work. Supervisor journal shows
+  streaming at 21:08:39 IST and capture_ready=true at 21:08:40.
+- Disconnect grace began 21:09:01; both virtual connectors were disconnected after
+  cleanup, with desktop_listening restored at 21:09:23 and listener ports retained.
+- Desktop engine PID309548 stayed unchanged through reuse/stream/idle cleanup;
+  display manager PID1819 stayed unchanged throughout enrollment testing.
+
+Evidence: `/tmp/monitorize-live-sample-test-results.jsonl` and
+`/tmp/monitorize-live-sample-test.log`; supervisor journal for this boot.
+Visible sample remains open/listening. The future-login user controller points to
+the isolated app worktree; keep that worktree while testing this sample.
+No commits/pushes. Logout/greeter/reconnect, deliberate reboot, GDM/SDDM and headless
+acceptance were not performed in this run. Plasma desktop success does not establish
+those results. 30 focused setup/coordinator tests also passed after installation.
+
+Verification for the physical-login default: 293 focused remote/login/GDM/KWin/UI
+tests pass. Full app: 892 tests, 7 failures/3 errors; exact corresponding failures
+are reproduced in the original checkout (843 tests, 8 failures/3 errors, including
+its stale host worker timeout assertion). Full suites isolated both XDG_CONFIG_HOME
+and XDG_STATE_HOME; an initial config-only run exposed existing live layout-recovery
+state to session fixtures, so later comparison runs used separate state directories.
+No live display recovery changes were made to address test expectations. Bundle
+validation, installed-source comparison (62 files), Python syntax and diff checks
+pass. Existing desktop Moonlight success is from the earlier sample test; this
+update's physical-greeter streaming remains untested until a deliberate logout.
+
+
+## Normal checkout integration — 25 October 2026
+
+User's terminal launch resolved to `/home/vinnavan/user/MegaProjects/Monitorize-testing`
+with `PYTHONPATH=linux`, still showing the old checkbox because implementation had
+only been retained in the isolated worktree. Integrated 37 differing app files and
+6 companion host files into the normal app/host checkouts, without commits. Existing
+Plasma source edits were retained; prior differing files and a manifest are backed
+up under `/home/vinnavan/.local/state/monitorize-source-integration-20261025`.
+
+Reopened actual `python3 -m monitorize` from the normal checkout; current process
+cwd and label source verified. Future-login controller now also uses that normal
+checkout. `Create virtual display at login` is unchecked by default and enabled
+against the installed policy. Plasma Login Manager uses the authenticated KWin
+existing-primary capture path, alongside GDM; no remaining GDM-only guard applies
+to that option. Actual greeter capture/input still requires deliberate logout
+acceptance; desktop listener is verified healthy in session3.
+
+Normal-checkout verification: 293 focused app tests and all 260 host tests pass;
+both diff checks pass. Original source checkouts now contain the implemented work;
+earlier notes that implementation remains isolated are historical. No root assets
+needed replacement in this step; they already matched the implemented policy.

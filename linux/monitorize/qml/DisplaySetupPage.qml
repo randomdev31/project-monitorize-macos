@@ -146,7 +146,13 @@ Item {
         let keys = ["resolution", "custom_w", "custom_h", "fps", "custom_fps"]
         for (let i = 0; i < keys.length; ++i) {
             let key = keys[i]
-            if (String(left[key] || "") !== String(right[key] || "")) return false
+            let leftValue = String(left[key] || "")
+            let rightValue = String(right[key] || "")
+            if (key === "resolution") {
+                leftValue = leftValue.split(" ")[0]
+                rightValue = rightValue.split(" ")[0]
+            }
+            if (leftValue !== rightValue) return false
         }
         return true
     }
@@ -413,7 +419,7 @@ Item {
                 Layout.fillWidth: true
                 Text {
                     text: backend.applyingConfiguration ? backend.configurationMessage
-                        : backend.configurationDirty ? (backend.configurationValidationMessage || "Unapplied changes") : backend.configurationRestartRequired ? "Changes saved. Restart required." : backend.configurationMessage
+                        : backend.configurationDirty ? (backend.configurationValidationMessage || "Unsaved changes") : backend.configurationRestartRequired ? "Changes saved. Restart streaming to apply." : backend.configurationMessage
                     color: theme.textSecondary
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap

@@ -2,6 +2,8 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import re
+from monitorize.config import app_log
 from PyQt6.QtCore import QObject,QTimer,pyqtSignal
 from monitorize.platform.login_capture_probe import find_boot_output
 from monitorize.remote_login.settings import SETTINGS,read_settings
@@ -78,6 +80,7 @@ class Participant:
         # privileged adoption worker activates it. Capture still requires enabled.
         self.factory=factory;self.output_finder=output_finder or (lambda:find_boot_output(require_enabled=False));self.bus=None;self.interface=None
         self.generation='';self.want_running=True;self.epoch=None;self.stream_options=None
+        self._control_failures={};self._diagnostic_state=None
         self.layout=None;self.layout_mode='extend'
         if factory is None:
             from monitorize.config.settings import load_general_settings
@@ -94,8 +97,22 @@ class Participant:
         self.interface=dbus.Interface(self.bus.get_object(NAME,PATH,introspect=False),INTERFACE)
 
     def _call(self,method,*args):
-        self._connect()
-        return json.loads(getattr(self.interface,method)(*args,timeout=60 if method=='PrepareDesktop' else 5))
+        try:
+            self._connect()
+            result=json.loads(getattr(self.interface,method)(*args,timeout=60 if method=='PrepareDesktop' else 5))
+        except Exception as error:
+            name=error.get_dbus_name() if hasattr(error,'get_dbus_name') else ''
+            name=name if isinstance(name,str) and re.fullmatch(r'[A-Za-z0-9_.]{1,160}',name) else 'unspecified'
+            fingerprint=(type(error).__name__,name)
+            if self._control_failures.get(method)!=fingerprint:
+                # Do not log args, descriptors, tokens, or arbitrary error text.
+                app_log.write('REMOTE',f'Control {method} failed: {fingerprint[0]}; D-Bus={name}')
+                self._control_failures[method]=fingerprint
+            raise
+        if method in self._control_failures:
+            app_log.write('REMOTE',f'Control {method} recovered.')
+            self._control_failures.pop(method)
+        return result
 
     def poll(self):
         status=self._poll()
@@ -107,6 +124,13 @@ class Participant:
                 self.layout.update(self.layout_mode,streaming,target)
             except Exception as exc:
                 status=dict(status,layout_error='Desktop layout failed: '+str(exc))
+        state=str(status.get('state','unknown'))
+        state=state if re.fullmatch(r'[a-z_]{1,48}',state) else 'unknown'
+        diagnostic=(state,bool(status.get('listening')),bool(status.get('capture_ready')),
+            bool(status.get('startup_error') or status.get('control_error')),bool(status.get('layout_error')),self.want_running)
+        if diagnostic!=self._diagnostic_state:
+            app_log.write('REMOTE','Desktop state=%s listening=%s capture_ready=%s operation_error=%s layout_error=%s want_running=%s'%diagnostic)
+            self._diagnostic_state=diagnostic
         return status
 
     def _poll(self):
@@ -166,7 +190,8 @@ class Participant:
                 return dict(status,state='error',capture_ready=False,listening=False,
                             control_error='Remote-login operation failed. Inspect the remote-login service journal.')
             # A timeout must not immediately replay a potentially completed write.
-            return dict(state='unavailable',capture_ready=False)
+            return dict(state='unavailable',capture_ready=False,listening=False,
+                        control_error='Remote-login control did not complete. See Diagnostics & logs for the failed operation.')
 
     def _restore_layout(self):
         try:
@@ -232,6 +257,14 @@ class RemoteLoginRuntime(QObject):
     def active(self):
         # Enrollment is not proof that a streaming service is running.
         return self.enabled and self.status.get('state') not in ('stopped','disabled','unavailable','error','authentication_error')
+    def refresh_enrollment(self):
+        """Refresh configuration without releasing the authenticated participant."""
+        enabled=False
+        if SETTINGS.exists():
+            settings=read_settings();enabled=settings.enabled and settings.uid==os.getuid()
+        self.enabled=bool(enabled)
+        if self.enabled:self.timer.start()
+        else:self.timer.stop()
     @property
     def message(self):
         return self.status.get('layout_error') or self.status.get('startup_error') or self.status.get('control_error') or MESSAGES.get(self.status.get('state'),'Waiting for remote-login ownership.').format(timeout=self.status.get('display_idle_timeout_seconds',20))
@@ -243,7 +276,9 @@ class RemoteLoginRuntime(QObject):
         def done(result):
             if not self.closed:
                 try:self._finished.emit(result.result())
-                except Exception:self._finished.emit({'state':'unavailable','capture_ready':False})
+                except Exception as error:
+                    app_log.write('REMOTE','Desktop worker failed: '+type(error).__name__)
+                    self._finished.emit({'state':'unavailable','capture_ready':False,'control_error':'Remote-login desktop worker failed. See Diagnostics & logs.'})
         future.add_done_callback(done)
 
     def _finish(self,result):

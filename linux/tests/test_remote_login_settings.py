@@ -91,11 +91,11 @@ class SettingsTests(unittest.TestCase):
                         {'adapter_name':'../../other'},{'hevc_mode':True}, {'stream_audio':'maybe'}):
             with self.assertRaises(ValueError):validate_descriptor(dict(base,stream_options=invalid),settings,'Virtual-4')
 
-    def test_login_primary_defaults_off_and_accepts_only_booleans(self):
-        self.assertFalse(self.load().login_primary_display)
+    def test_login_virtual_defaults_off_and_accepts_only_booleans(self):
+        self.assertFalse(self.load().create_login_virtual_display)
         self.values['manager']='gdm.service'
-        self.values['login_primary_display']=True
-        self.assertTrue(self.load().login_primary_display)
+        self.values['create_login_virtual_display']=True
+        self.assertTrue(self.load().create_login_virtual_display)
         for value in (1,0,'true',None,[],{}):
-            self.values['login_primary_display']=value
+            self.values['create_login_virtual_display']=value
             with self.subTest(value=value),self.assertRaises(ValueError):self.load()

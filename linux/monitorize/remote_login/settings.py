@@ -22,8 +22,11 @@ class Settings:
     encoder: str
     adapter: str
     manager: str = "plasmalogin.service"
-    login_primary_display: bool = False
+    create_login_virtual_display: bool = False
     display_idle_timeout_seconds: int = 20
+
+    @property
+    def login_primary_display(self):return not self.create_login_virtual_display
 
     @property
     def directory(self):return Path('/var/lib/monitorize/remote-login')/str(self.uid)
@@ -58,8 +61,10 @@ def read_settings(path=SETTINGS,*,owner_uid=0,account_lookup=pwd.getpwuid):
         from .display_managers import MANAGERS
         if values['manager'] not in MANAGERS:raise ValueError()
         timeout=validate_idle_timeout(values.get('display_idle_timeout_seconds',20))
-        primary=values.get('login_primary_display',False)
-        if type(primary) is not bool:raise ValueError()
+        # Missing positive field migrates every legacy enrollment to physical capture.
+        virtual=values.get('create_login_virtual_display',False)
+        if type(virtual) is not bool:raise ValueError()
+        if 'login_primary_display' in values and type(values['login_primary_display']) is not bool:raise ValueError()
         encoder=values['encoder'];adapter=values['adapter'];profile=values['profile']
         if encoder not in ('software','vaapi','nvenc'):raise ValueError()
         if not isinstance(adapter,str) or (adapter and not re.fullmatch(r'/dev/dri/renderD[0-9]+',adapter)):raise ValueError()
@@ -73,7 +78,7 @@ def read_settings(path=SETTINGS,*,owner_uid=0,account_lookup=pwd.getpwuid):
             adapter=values.get('reconnect_adapter','')
             if encoder not in ('software','vaapi','nvenc'):raise ValueError()
             if not isinstance(adapter,str) or (adapter and not re.fullmatch(r'/dev/dri/renderD[0-9]+',adapter)):raise ValueError()
-        return Settings(enabled,uid,gid,account.pw_name,account.pw_dir,profile,encoder,adapter,values['manager'],primary,timeout)
+        return Settings(enabled,uid,gid,account.pw_name,account.pw_dir,profile,encoder,adapter,values['manager'],virtual,timeout)
     except (OSError,ValueError,TypeError,KeyError):
         raise ValueError('Remote-login configuration is unsafe, unsupported or no longer matches its account.') from None
 

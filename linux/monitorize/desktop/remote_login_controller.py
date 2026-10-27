@@ -63,6 +63,35 @@ def _write(path,data):
         if temporary.exists():temporary.unlink()
 
 
+def controller_snapshot(*,config_home=None,enabled=None):
+    config=Path(config_home or os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))
+    if enabled is None:
+        result=subprocess.run(['/usr/bin/systemctl','--user','is-enabled','--quiet',UNIT],
+                              capture_output=True,text=True,timeout=5)
+        enabled=result.returncode==0
+    files={}
+    for relative in ('systemd/user/'+UNIT,'monitorize/remote-login-controller-backup.json','autostart/monitorize.desktop'):
+        path=config/relative;data=_read(path)
+        files[relative]=None if data is None else (data,path.stat().st_mode&0o777)
+    return dict(root=config,files=files,enabled=bool(enabled))
+
+
+def restore_controller_snapshot(snapshot,*,run=_run):
+    config=snapshot['root'];unit=config/'systemd/user'/UNIT
+    current=_read(unit);original=snapshot['files']['systemd/user/'+UNIT]
+    if current is not None and not current.startswith(MARKER.encode()) and (original is None or current!=original[0]):
+        raise ValueError('Controller unit changed during setup; it was retained.')
+    if not snapshot['enabled'] and current is not None:run(['disable',UNIT])
+    for relative,item in snapshot['files'].items():
+        path=config/relative
+        _read(path)
+        if item is None:path.unlink(missing_ok=True)
+        else:
+            _write(path,item[0]);path.chmod(item[1])
+    run(['daemon-reload'])
+    if snapshot['enabled']:run(['enable',UNIT])
+
+
 def configure(enabled,*,config_home=None,run=_run):
     config=Path(config_home or os.environ.get('XDG_CONFIG_HOME',Path.home()/'.config'))
     unit=config/'systemd/user'/UNIT;backup=config/'monitorize/remote-login-controller-backup.json'

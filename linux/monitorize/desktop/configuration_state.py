@@ -88,6 +88,10 @@ class ConfigurationState:
         self.draft = copy.deepcopy(bundle)
         self.revision += 1
 
+    def discard(self):
+        self.draft = copy.deepcopy(self.saved)
+        self.revision += 1
+
     def accept(self, bundle):
         self.applied = copy.deepcopy(bundle)
         self.saved = copy.deepcopy(bundle)

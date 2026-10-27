@@ -54,7 +54,10 @@ def prepare(destination,binary,assets,*,vkms_source=None):
             (target.parent/'VERSION').write_text(host_version+'\n')
             manifest=destination/'usr/share/monitorize-vkms/capabilities.json'
             manifest.parent.mkdir(parents=True,exist_ok=True)
-            manifest.write_text(json.dumps(dict(schema_version=1,version=host_version,remote_login_protocols=REQUIRED_PROTOCOLS))+'\n')
+            protocols=dict(REQUIRED_PROTOCOLS)
+            if _constant((host/'boot_display.py').read_text(),'LIVE_ENROLLMENT_PROTOCOL')==1:
+                protocols['live_enrollment']=1
+            manifest.write_text(json.dumps(dict(schema_version=1,version=host_version,remote_login_protocols=protocols))+'\n')
             # The standalone installer also keeps executable copies here. Update
             # them together so ordinary cleanup cannot bypass boot-lease guards.
             for module,name in (('helper.py','monitorize-vkms-helper'),('dbus_service.py','monitorize-vkms-dbus-service'),('authorization_setup.py','monitorize-vkms-authorization')):

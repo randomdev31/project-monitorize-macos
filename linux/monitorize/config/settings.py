@@ -412,3 +412,39 @@ def save_gnome_virtual_layout(slot: str, logical_monitors: list) -> None:
         _gnome_virtual_group(),
         {"layout": json.dumps(stored, separators=(",", ":"))},
     )
+
+
+def saved_display_idle_timeout():
+    value = _get_settings().value('general/display_idle_timeout_seconds', None)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        seconds = int(value)
+        return seconds if 1 <= seconds <= 600 and str(seconds) == str(value) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def load_display_idle_timeout():
+    saved = saved_display_idle_timeout()
+    if saved is not None:
+        return saved
+    # Preserve an already configured remote timeout when introducing this setting.
+    from monitorize.remote_login.settings import read_settings
+    try:
+        enrolled = read_settings()
+        if enrolled.uid == os.getuid():
+            return enrolled.display_idle_timeout_seconds
+    except ValueError:
+        pass
+    return 20
+
+
+def save_display_idle_timeout(seconds):
+    from monitorize.remote_login.settings import validate_idle_timeout
+    seconds = validate_idle_timeout(seconds)
+    settings = _get_settings()
+    settings.setValue('general/display_idle_timeout_seconds', seconds)
+    settings.sync()
+    if settings.status() != QSettings.Status.NoError:
+        raise OSError('Could not save the disconnect timer.')

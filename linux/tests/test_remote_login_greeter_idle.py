@@ -43,7 +43,7 @@ class GreeterIdleTests(unittest.TestCase):
             namespace=dict(worker_context=lambda:(SimpleNamespace(close=lambda:None),None,None),
                 __name__=daemon.__name__,__package__=daemon.__package__,
                 boot_gate=boot_gate,helper=SimpleNamespace(_active_session=lambda uid:('g1',{})),
-                settings=SimpleNamespace(),service=SimpleNamespace(boot_generation='a'*32),
+                settings=SimpleNamespace(create_login_virtual_display=True),service=SimpleNamespace(boot_generation='a'*32),
                 greeter_operation_installed=host_operation)
             exec(compile(ast.Module(body=[operation],type_ignores=[]),daemon.__file__,'exec'),namespace)
             with patch('monitorize.remote_login.wayland_greeter.greeter_compositor',return_value='gnome'), \

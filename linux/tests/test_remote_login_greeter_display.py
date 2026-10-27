@@ -29,4 +29,4 @@ class GreeterContextTests(unittest.TestCase):
         bus=Bus();base=bus.properties()
         bus.call=lambda *args:[('g1',42,'greeter','seat0','/greeter'),('m1',42,'greeter','','/manager')]
         bus.properties=lambda path,*args:dict(base,Id='m1',Class='manager-early',Type='unspecified',Seat=('','/')) if path=='/manager' else base
-        self.assertEqual(greeter_context(bus,isolate_uid=True),dict(session='g1',greeter_uid=42))
+        self.assertEqual(greeter_context(bus,isolate_uid=True),dict(session='g1',greeter_uid=42,session_type='wayland'))

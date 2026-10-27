@@ -36,7 +36,7 @@ def _constant(source,name):
     return values[0]
 
 
-def host_readiness(root=Path('/'), *, owner_uid=0) -> dict:
+def host_readiness(root=Path('/'), *, owner_uid=0, require_live=False) -> dict:
     root=Path(root).absolute()
     protocols={}
     def result(reason,message):
@@ -85,4 +85,15 @@ def host_readiness(root=Path('/'), *, owner_uid=0) -> dict:
         if not engine.is_file() or not exact_kms_engine(engine):raise ValueError()
     except (OSError,ValueError):
         return result('engine_incompatible','Install the compatible Monitorize Sunshine engine with exact KMS output support.')
+    if require_live:
+        try:
+            live=_read(root/'usr/lib/monitorize-remote-login/monitorize/remote_login/live_setup.py',root,owner_uid)
+            entry=_read(root/'usr/libexec/monitorize/remote-login/entry.py',root,owner_uid)
+            setup=_read(root/'usr/libexec/monitorize/monitorize-system-setup',root,owner_uid)
+            if (type(protocols.get('live_enrollment')) is not int or protocols['live_enrollment']!=1
+                or _constant(boot,'LIVE_ENROLLMENT_PROTOCOL')!=1 or _constant(live,'LIVE_ENROLLMENT_PROTOCOL')!=1
+                or b'setup-enable-live' not in entry or b'enable-live' not in setup):
+                raise ValueError('Live enrollment assets do not match.')
+        except (OSError,ValueError,SyntaxError,TypeError):
+            return result('live_incompatible','Install matching Monitorize and VKMS live-enrollment service updates before enabling remote login without reboot.')
     return result('ready','Remote-login service assets and VKMS host protocols are installed. Display-manager live validation is separate.')

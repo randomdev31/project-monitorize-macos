@@ -11,6 +11,10 @@ Item {
     property bool settingsAutostartEnabled: false
     property string settingsError: ""
     property string startupNotice: ""
+    property bool savingTimeout: false
+    property string timeoutNotice: ""
+    property bool timeoutFailed: false
+    property int savedTimeout: 20
     property bool startupCleanupPending: false
     property int loginAfterBootDisable: -1
     property string sunshineResetMessage: ""
@@ -19,6 +23,14 @@ Item {
     property string vkmsAuthorizationMessage: ""
     property bool vkmsChecking: false
     property var bootStatus: ({available: false, enabled: false, supported: false})
+    function startupResultMessage(result) {
+        if (!result.success) return ""
+        if (result.primary_display_setting)
+            return "Login-screen display choice saved for the next boot. Desktop streaming is unchanged."
+        if (result.activated)
+            return "Remote login enabled. Available now and after future boots."
+        return result.message || "Startup settings saved."
+    }
     function refreshAuthorization() {
         vkmsChecking = true
         backend.refreshVkmsAuthorization()
@@ -27,8 +39,9 @@ Item {
         bootStatus = backend.getRemoteLoginSetupStatus()
         settingsLoading = true
         bootCheck.checked = bootStatus.enabled === true
-        displayTimeout.value = bootStatus.display_idle_timeout_seconds || 20
-        loginPrimaryCheck.checked = bootStatus.login_primary_display === true
+        savedTimeout = backend.getDisplayIdleTimeout()
+        displayTimeout.value = savedTimeout
+        loginPrimaryCheck.checked = bootStatus.create_login_virtual_display === true
         autostartCheck.checked = bootStatus.enabled === true || backend.isAutostartEnabled()
         settingsLoading = false
     }
@@ -53,9 +66,16 @@ Item {
             page.vkmsAuthorization = result
         }
         function onRemoteLoginSetupFinished(result) {
+            if (result.timeout_setting) {
+                page.savingTimeout = false
+                page.timeoutFailed = !result.success
+                page.timeoutNotice = result.message || (result.success ? "Disconnect timer saved." : "Could not save the disconnect timer.")
+                page.refreshStartup()
+                return
+            }
             page.startupCleanupPending = result.cleanup_pending === true
             page.settingsError = result.success ? "" : (result.message || "Startup setup failed.")
-            page.startupNotice = result.success ? (result.reboot_required ? "Startup settings saved. Reboot to apply the change." : (result.message || "Startup settings saved.")) : ""
+            page.startupNotice = page.startupResultMessage(result)
             page.refreshStartup()
             if (result.success && !page.bootStatus.enabled && page.loginAfterBootDisable >= 0) {
                 let error = backend.setAutostartEnabled(page.loginAfterBootDisable === 1)
@@ -160,13 +180,13 @@ Item {
                         keepCheckedBlue: true
                         id: bootCheck; objectName: "bootStartupCheck"; text: "Also start at boot (login screen)"
                         Layout.fillWidth: false
-                        enabled: autostartCheck.checked && !backend.remoteLoginSetupBusy && page.bootStatus.available && (page.bootStatus.supported || page.bootStatus.enabled)
+                        enabled: autostartCheck.checked && !backend.remoteLoginSetupBusy && page.bootStatus.available && (page.bootStatus.enabled || (page.bootStatus.supported && page.bootStatus.live_available === true))
                         onClicked: {
                             page.loginAfterBootDisable = checked ? -1 : 1
                             backend.configureRemoteLogin(checked)
                         }
                     }
-                    StartupHelp { helpText: "Makes Monitorize streaming available at the login screen.\nAfter signing in, reconnect to the same Moonlight PC. Desktop startup is included." }
+                    StartupHelp { helpText: "Enables remote login now and after future boots, without restarting your PC.\nAfter signing in, reconnect to the same Moonlight PC. Desktop startup is included." }
                     Item { Layout.fillWidth: true }
                 }
                 RowLayout {
@@ -177,36 +197,15 @@ Item {
                     CustomCheckBox {
                         id: loginPrimaryCheck
                         objectName: "loginPrimaryDisplayCheck"
-                        text: "Do not create virtual displays on the login screen"
+                        text: "Create virtual display at login"
                         keepCheckedBlue: true
                         Layout.fillWidth: true
-                        enabled: page.bootStatus.enabled === true && !backend.remoteLoginSetupBusy
+                        enabled: page.bootStatus.enabled === true && page.bootStatus.login_display_policy_available === true && !backend.remoteLoginSetupBusy
                         opacity: enabled ? 1.0 : 0.45
-                        onClicked: backend.configureLoginPrimaryDisplay(checked)
+                        onClicked: backend.configureLoginVirtualDisplay(checked)
                     }
-                    StartupHelp { helpText: "Streams GNOME's existing primary display, where the login form appears.\nYour desktop display settings still apply after login. Changes apply after reboot." }
                 }
-                RowLayout {
-                    visible: page.bootOptionsExpanded
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 48
-                    Text { text: "Remove virtual display after disconnect"; color: theme.textPrimary; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-                    SpinBox {
-                        id: displayTimeout
-                        objectName: "displayIdleTimeoutSeconds"
-                        from: 1; to: 600; value: 20; editable: true
-                        enabled: page.bootStatus.enabled === true && !backend.remoteLoginSetupBusy
-                    }
-                    Text { text: "seconds"; color: theme.textSecondary }
-                    Button {
-                        id: saveDisplayTimeout
-                        objectName: "saveDisplayIdleTimeout"
-                        text: backend.remoteLoginSetupBusy ? "Saving…" : "Save"
-                        enabled: page.bootStatus.enabled === true && !backend.remoteLoginSetupBusy && displayTimeout.value !== (page.bootStatus.display_idle_timeout_seconds || 20)
-                        onClicked: backend.configureDisplayIdleTimeout(displayTimeout.value)
-                    }
-                    StartupHelp { helpText: "Keep the remote-login display for this many seconds after the last client disconnects. Reconnecting cancels removal.\nA retained login-screen display uses the same timeout after login. Saved changes apply to future idle periods." }
-                }
+
                 Text {
                     visible: page.bootOptionsExpanded && (!page.bootStatus.available || (!page.bootStatus.supported && !page.bootStatus.enabled))
                     text: page.bootStatus.message || ""
@@ -217,7 +216,8 @@ Item {
                     color: theme.errorText; Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
                 Text {
-                    text: backend.remoteLoginSetupBusy ? "Applying startup settings… Complete any administrator authorization prompt." : page.startupNotice
+                    objectName: "startupNoticeText"
+                    text: backend.remoteLoginSetupBusy && !page.savingTimeout ? "Applying startup settings…" : page.startupNotice
                     visible: text.length > 0
                     color: theme.textSecondary; Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
@@ -226,6 +226,81 @@ Item {
                     visible: page.startupCleanupPending
                     enabled: !backend.remoteLoginSetupBusy
                     onClicked: backend.configureRemoteLogin(false)
+                }
+
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: theme.border; Layout.topMargin: 8; Layout.bottomMargin: 8 }
+                RowLayout {
+                    objectName: "displayIdleTimeoutRow"
+                    Layout.fillWidth: true
+                    Text { text: "Remove virtual display after disconnect"; color: theme.textPrimary; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                    SpinBox {
+                        id: displayTimeout
+                        objectName: "displayIdleTimeoutSeconds"
+                        from: 1; to: 600; value: 20; editable: true
+                        enabled: !backend.remoteLoginSetupBusy
+                        implicitWidth: 124
+                        implicitHeight: 42
+                        leftPadding: 32
+                        rightPadding: 32
+                        opacity: enabled ? 1.0 : 0.45
+                        contentItem: TextInput {
+                            text: displayTimeout.textFromValue(displayTimeout.value, displayTimeout.locale)
+                            color: theme.cardTextPrimary
+                            selectionColor: theme.accent
+                            selectedTextColor: theme.buttonText
+                            font.pixelSize: 13
+                            font.weight: Font.DemiBold
+                            horizontalAlignment: TextInput.AlignHCenter
+                            verticalAlignment: TextInput.AlignVCenter
+                            readOnly: !displayTimeout.editable
+                            validator: displayTimeout.validator
+                            inputMethodHints: Qt.ImhDigitsOnly
+                            selectByMouse: true
+                        }
+                        background: Rectangle {
+                            color: theme.surface
+                            border.color: (displayTimeout.activeFocus || displayTimeout.contentItem.activeFocus) ? theme.accent : (displayTimeout.hovered ? theme.borderHover : theme.border)
+                            radius: theme.controlRadius
+                        }
+                        down.indicator: Rectangle {
+                            x: 1; y: 1
+                            width: 30; height: displayTimeout.height - 2
+                            radius: theme.controlRadius
+                            color: displayTimeout.down.pressed ? theme.surfaceAlt : (displayTimeout.down.hovered ? theme.borderHover : "transparent")
+                            Text {
+                                anchors.centerIn: parent
+                                text: "−"; font.pixelSize: 18
+                                color: displayTimeout.value > displayTimeout.from ? theme.cardTextPrimary : theme.textMuted
+                            }
+                        }
+                        up.indicator: Rectangle {
+                            x: displayTimeout.width - width - 1; y: 1
+                            width: 30; height: displayTimeout.height - 2
+                            radius: theme.controlRadius
+                            color: displayTimeout.up.pressed ? theme.surfaceAlt : (displayTimeout.up.hovered ? theme.borderHover : "transparent")
+                            Text {
+                                anchors.centerIn: parent
+                                text: "+"; font.pixelSize: 18
+                                color: displayTimeout.value < displayTimeout.to ? theme.cardTextPrimary : theme.textMuted
+                            }
+                        }
+                    }
+                    Text { text: "seconds"; color: theme.textSecondary }
+                    CustomButton {
+                        id: saveDisplayTimeout
+                        objectName: "saveDisplayIdleTimeout"
+                        implicitWidth: 80
+                        text: page.savingTimeout ? "Saving…" : "Save"
+                        enabled: !backend.remoteLoginSetupBusy && displayTimeout.value !== page.savedTimeout
+                        onClicked: { page.savingTimeout = true; backend.configureDisplayIdleTimeout(displayTimeout.value) }
+                    }
+                    StartupHelp { helpText: "Remove the virtual display after the last client disconnects. Reconnecting cancels removal.\nApplies to manually started sessions and remote login. Saved changes apply to future disconnects." }
+                }
+                Text {
+                    text: page.savingTimeout ? "Saving disconnect timer…" : page.timeoutNotice
+                    visible: text.length > 0
+                    color: page.timeoutFailed ? theme.errorText : theme.textSecondary
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
 
             }

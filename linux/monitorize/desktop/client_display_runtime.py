@@ -4,6 +4,7 @@ Only a paired-client identity supplied by our managed engine may own a slot.
 The socket is deliberately not an externally reachable control API.
 """
 from dataclasses import dataclass, field
+import copy
 import hmac
 import json
 import math
@@ -77,6 +78,7 @@ class ClientDisplayRuntime(QObject):
         self.cleanup_blocked = {}
         self.guardian = None
         self.error = ''
+        self._enrollment_pause = None
         self.token = secrets.token_hex(32)
         base = runtime_dir or os.environ.get('XDG_RUNTIME_DIR') or tempfile.gettempdir()
         self._directory = tempfile.mkdtemp(prefix='monitorize-client-', dir=base)
@@ -438,6 +440,8 @@ class ClientDisplayRuntime(QObject):
             self._reply(peer, False, error=str(exc))
 
     def _request(self, peer, request):
+        if self._enrollment_pause is not None:
+            raise ValueError('Remote-login setup is pausing this listener; retry later.')
         if not isinstance(request, dict) or type(request.get('version')) is not int or request['version'] != 1:
             raise ValueError('Unsupported protocol version.')
         token = request.get('token')
@@ -526,7 +530,8 @@ class ClientDisplayRuntime(QObject):
             slot.grace = QTimer(self)
             slot.grace.setSingleShot(True)
             slot.grace.timeout.connect(lambda: self._expire_grace(slot))
-            slot.grace.start(20000)
+            from monitorize.config.settings import load_display_idle_timeout
+            slot.grace.start(load_display_idle_timeout() * 1000)
             self._reply(peer)
         else:
             raise ValueError('Unknown control operation.')
@@ -851,7 +856,35 @@ class ClientDisplayRuntime(QObject):
             self._watchdog.stop()
         self.changed.emit()
 
+    def pause_idle_for_enrollment(self):
+        if self._enrollment_pause is not None:
+            raise ValueError('Remote-login setup is already running.')
+        if 2 in self.slots:
+            raise ValueError('Stop Display 2 before enabling remote login.')
+        if self.retiring or self.cleanup_blocked:
+            raise ValueError('Wait for display cleanup before enabling remote login.')
+        for slot in self.slots.values():
+            if (slot.instance != 1 or slot.status != 'waiting' or slot.manual or slot.owner
+                    or slot.request_id or slot.target or slot.pending or slot.process or slot.grace or slot.deadline):
+                raise ValueError('Stop the current stream before enabling remote login.')
+        snapshot={'configs':{i:copy.deepcopy(s.config) for i,s in self.slots.items()}}
+        self._enrollment_pause=snapshot
+        self._watchdog.stop()
+        for instance in list(self.slots):self.stop_slot(instance)
+        return snapshot
+
+    def enrollment_pause_complete(self,snapshot):
+        return (self._enrollment_pause is snapshot and not self.retiring and not self.cleanup_blocked
+                and not any(is_sunshine_running(i) for i in snapshot['configs']))
+
+    def resume_enrollment_pause(self,snapshot,*,instances=(1,)):
+        if self._enrollment_pause is not snapshot:return
+        self._enrollment_pause=None
+        for instance,config in snapshot['configs'].items():
+            if instance in instances:self.start_slot(instance,config)
+
     def stop(self):
+        self._enrollment_pause=None  # Explicit Stop/Quit cancels restoration intent.
         for instance in list(self.slots):
             self.stop_slot(instance)
         for peer in list(self._connections):

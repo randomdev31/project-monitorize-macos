@@ -14,11 +14,11 @@ def greeter_context(bus,*,isolate_uid=False):
         values=bus.properties(row[4],SESSION)
         if (values.get('Class')=='greeter' and values.get('Active') and not values.get('Remote')
             and values.get('Seat',('',))[0]=='seat0' and values.get('Type') in ('wayland','x11')):
-            found.append(dict(session=str(values['Id']),greeter_uid=int(values['User'][0])))
+            found.append(dict(session=str(values['Id']),greeter_uid=int(values['User'][0]),session_type=str(values['Type'])))
     if len(found)!=1:raise PermissionError('A unique active graphical greeter is required.')
     context=found[0]
     if isolate_uid:
-        # GDM's compositor can live in a per-UID user service rather than the
+        # The greeter compositor can live in a per-UID user service rather than the
         # session scope. Its per-UID bus/socket evidence is usable only when no
         # other graphical session (including another seat or closing greeter)
         # shares that UID. Every gate rechecks this around display activation.
@@ -29,5 +29,6 @@ def greeter_context(bus,*,isolate_uid=False):
             if values.get('Type') in ('wayland','x11'):
                 graphical.append(str(values.get('Id','')))
         if graphical!=[context['session']]:
-            raise PermissionError('GDM requires an isolated greeter account with one graphical session across all seats.')
+            raise PermissionError('This compositor requires an isolated greeter account with one graphical session across all seats.')
+    if not isolate_uid:context.pop('session_type',None)
     return context

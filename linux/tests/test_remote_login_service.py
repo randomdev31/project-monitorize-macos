@@ -41,6 +41,24 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.service.status()['state'],'desktop_listening')
         self.assertEqual(self.service.status()['startup_error'],'')
 
+    def test_completion_requires_same_session_fresh_listener(self):
+        from unittest.mock import Mock
+        observer=Mock();self.service.desktop_listening_observer=observer
+        token=self.login()['generation'];self.service.start_desktop(':1.10',token,{})
+        observer.assert_not_called()
+        self.units.readiness=lambda phase:({'listening':True,'state':'desktop_listening'} if phase=='desktop' else {})
+        self.service.tick();observer.assert_called_with('s1')
+        self.assertEqual(self.service.status()['uid'],1000)
+        self.assertTrue(self.service.status()['desktop_owned'])
+
+    def test_receipt_observer_failure_does_not_stop_a_healthy_listener(self):
+        from unittest.mock import Mock
+        self.service.desktop_listening_observer=Mock(side_effect=OSError('private'))
+        token=self.login()['generation'];self.service.start_desktop(':1.10',token,{})
+        self.units.readiness=lambda phase:({'listening':True,'state':'desktop_listening'} if phase=='desktop' else {})
+        self.service.tick();self.assertTrue(self.units.desktop)
+        self.assertEqual(self.service.status()['state'],'desktop_listening')
+
     def test_boot_display_error_is_visible_without_claiming_capture_ready(self):
         self.service.tick()
         self.units.readiness=lambda phase:({'listening':True,'startup_error':'Remote display preparation failed.'} if phase=='boot' else {})

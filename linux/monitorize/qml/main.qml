@@ -21,6 +21,8 @@ Rectangle {
     property string highlightedPage: "DisplaySetupPage.qml"
     property bool navHighlightFading: false
     property string pendingNavigation: ""
+    property string pendingConfigurationPage: ""
+    property string configurationNavigationError: ""
 
     function navigationGroup(page) {
         return (page === "DisplaySetupPage.qml" || page === "StreamingPage.qml")
@@ -57,17 +59,51 @@ Rectangle {
     function navigate(page) {
         if (page === selectedPage && stack.depth === 1) {
             pendingNavigation = ""
+            configureUnsavedDialog.close()
             return
         }
         if (stack.busy) {
             pendingNavigation = page
             return
         }
+        if (configureUnsavedDialog.visible) {
+            pendingConfigurationPage = page
+            return
+        }
         if (stack.currentItem && typeof stack.currentItem.commitAllPendingDisplaySettings === "function") {
             stack.currentItem.commitAllPendingDisplaySettings()
         }
+        if (selectedPage === "DisplaySetupPage.qml" && page !== selectedPage && backend.configurationDirty) {
+            pendingConfigurationPage = page
+            configurationNavigationError = ""
+            configureUnsavedDialog.open()
+            return
+        }
+        finishNavigation(page)
+    }
+
+    function finishNavigation(page) {
         selectedPage = page
         stack.replace(null, page)
+    }
+
+    function resolveConfigurationNavigation(save) {
+        if (backend.applyingConfiguration || !pendingConfigurationPage) return
+        configurationNavigationError = ""
+        if (save) {
+            if (!backend.saveConfigurationForLater()) return
+        } else {
+            // Old controls must not publish stale edits as they lose focus or close.
+            stack.currentItem.loading = true
+            if (!backend.discardConfigurationChanges()) {
+                stack.currentItem.loading = false
+                return
+            }
+        }
+        let destination = pendingConfigurationPage
+        stack.currentItem.loading = true
+        configureUnsavedDialog.close()
+        finishNavigation(destination)
     }
 
     function showConfigurationDraft() {
@@ -103,10 +139,82 @@ Rectangle {
         target: backend
         function onConfigureDisplayRequestedForDraft() { showConfigurationDraft() }
         function onConfigurationApplyFinished(success, message) {
+            if (configureUnsavedDialog.visible && !success) {
+                root.configurationNavigationError = message
+                return
+            }
             root.stagnantCleanupSucceeded = success
             root.stagnantCleanupMessage = message
             stagnantCleanupToast.open()
             stagnantCleanupToastTimer.restart()
+        }
+    }
+
+    Dialog {
+        id: configureUnsavedDialog
+        objectName: "configureUnsavedDialog"
+        title: "Save configuration changes?"
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        anchors.centerIn: parent
+        width: Math.min(560, root.width - 40)
+        padding: 20
+        background: Rectangle { color: theme.surface; border.color: theme.border; radius: theme.cardRadius }
+        header: Label {
+            text: configureUnsavedDialog.title
+            color: theme.headingText
+            font.pixelSize: 18
+            font.weight: Font.DemiBold
+            padding: 20
+            bottomPadding: 8
+            wrapMode: Text.WordWrap
+        }
+        contentItem: ColumnLayout {
+            Text {
+                text: "Saving keeps your current stream running. The changes will take effect when you next start or restart streaming."
+                color: theme.textPrimary
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            Text {
+                text: root.configurationNavigationError || backend.configurationValidationMessage
+                visible: text.length > 0
+                color: theme.errorText
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+        }
+        footer: DialogButtonBox {
+            padding: 20
+            topPadding: 8
+            background: Item {}
+            CustomButton {
+                objectName: "saveConfigurationChangesButton"
+                text: "Save changes"
+                enabled: backend.configurationValid && !backend.applyingConfiguration
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: root.resolveConfigurationNavigation(true)
+            }
+            CustomButton {
+                objectName: "discardConfigurationChangesButton"
+                text: "Discard changes"; primary: false
+                enabled: !backend.applyingConfiguration
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: root.resolveConfigurationNavigation(false)
+            }
+            CustomButton {
+                id: keepConfigurationEditingButton
+                objectName: "keepConfigurationEditingButton"
+                text: "Keep editing"; primary: false
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: configureUnsavedDialog.reject()
+            }
+        }
+        onOpened: keepConfigurationEditingButton.forceActiveFocus()
+        onClosed: {
+            root.pendingConfigurationPage = ""
+            root.configurationNavigationError = ""
         }
     }
 

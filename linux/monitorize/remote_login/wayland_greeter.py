@@ -5,9 +5,11 @@ from .display_managers import require_manager,COMPOSITORS
 
 def greeter_environment(settings,context,helper):
     capability=require_manager(getattr(settings,'manager','plasmalogin.service'))
-    if capability['manager']=='gdm.service':
-        # The caller already authenticated the active greeter. greeter_compositor
-        # binds its UID's DisplayConfig owner to the live Wayland peer next.
+    if capability['manager'] in ('gdm.service','plasmalogin.service'):
+        # logind authenticates the session; the compositor verifier resolves its
+        # own bus/socket, including services outside the session scope.
+        if context.get('session_type')!='wayland':
+            raise RuntimeError('Remote login requires a verified Wayland greeter.')
         return context['session'],{'XDG_SESSION_TYPE':'wayland'}
     return helper._active_session(context['greeter_uid'])
 
@@ -30,10 +32,10 @@ def greeter_compositor(settings, context, session, environment, helper):
         pid=helper._validate_session_socket(socket,context['greeter_uid'],session)
         actual=COMPOSITORS.get(Path('/proc/'+str(pid)+'/exe').resolve().name,'unknown')
         if actual!=expected:raise RuntimeError('Running SDDM compositor does not match its verified configuration.')
-    else:
-        desktop=environment.get('XDG_CURRENT_DESKTOP','').lower()
-        if not any(name in desktop for name in ('kde','plasma')):
-            raise RuntimeError('Plasma greeter compositor could not be verified.')
+    elif capability['manager']=='plasmalogin.service':
+        from .kwin_context import verify
+        environment.update(verify(context,session,environment,helper))
+    else:raise RuntimeError('Unsupported greeter compositor.')
     return expected
 
 
@@ -49,13 +51,16 @@ def activate_greeter(settings,context,session,environment,output,remaining,helpe
     if compositor=='gnome':
         from .gdm_context import verify
         verify(context,session,environment,helper)
+    elif getattr(settings,'manager','plasmalogin.service')=='plasmalogin.service':
+        from .kwin_context import verify
+        verify(context,session,environment,helper)
     check()
     return result
 
 
 def capture_operation(settings,context,operation,helper,check,virtual):
-    """Keep primary-display opt-in entirely outside virtual display mutations."""
-    if getattr(settings,'login_primary_display',False):
+    """Existing-display capture is the default; virtual login is explicit opt-in."""
+    if not getattr(settings,'create_login_virtual_display',False):
         from .login_primary import operation as primary_operation
         return primary_operation(settings,context,operation,helper,check)
     return virtual()

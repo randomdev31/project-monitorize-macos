@@ -12,7 +12,7 @@ class HandoffService:
     def __init__(self,uid,sessions,units,*,journal=None):
         self.model=Supervisor(uid);self.sessions=sessions;self.units=units;self.epoch=secrets.token_hex(16)
         self.journal=journal
-        self.boot_error=''
+        self.boot_error='';self._diagnostic_state=None;self._observation_error=None
         if journal is not None:self.model.stopped_session=journal.load()
         self.owner=None;self.owner_session=None;self.ready=False;self.boot_ready=False;self.boot_listening=False;self.boot_phase='';self.listening=False;self.desktop_phase='';self.startup_error='';self._lock=RLock()
 
@@ -27,15 +27,23 @@ class HandoffService:
                 state='login_available' if self.boot_ready else self.boot_phase if self.boot_listening and self.boot_phase else state
                 if self.boot_error:state='error'
             error=self.boot_error if self.model.state=='greeter_listening' else self.startup_error
+            diagnostic=(state,self.model.state,self.listening,self.ready,self.boot_listening,self.boot_ready,bool(error))
+            if diagnostic!=self._diagnostic_state:
+                print('Remote-login state=%s coordinator=%s desktop_listening=%s desktop_capture=%s boot_listening=%s boot_capture=%s operation_error=%s'%diagnostic,flush=True)
+                self._diagnostic_state=diagnostic
             return dict(display_idle_timeout_seconds=getattr(self,'grace_timeout',None) or (self.display_timeout() if hasattr(self,'display_timeout') else 20),desktop_mode_version=1,desktop_options_version=1,startup_error=error,state=state,epoch=self.epoch,enabled=self.model.enabled,capture_ready=self.ready or self.boot_ready,
+                        uid=self.model.uid,desktop_owned=bool(self.owner and self.owner_session==self.model.session),
                         session=self.model.session or '',listening=self.listening,
                         output_name=self.output_name() if hasattr(self,'output_name') else '')
 
     def tick(self):
         with self._lock:
+            stage='session_snapshot'
             try:
                 snapshot=self.sessions.snapshot()
+                stage='engine_status'
                 boot=self.units.running('boot');desktop=self.units.running('desktop')
+                stage='engine_health'
                 if hasattr(self.units,'readiness'):
                     boot_health=self.units.readiness('boot') if boot else {}
                     self.boot_ready=bool(boot_health.get('capture_ready'))
@@ -52,6 +60,7 @@ class HandoffService:
                 else:self.boot_ready=False;self.boot_listening=False
                 # After service restart an unclaimed existing engine is stopped,
                 # never assigned to whichever desktop happens to call first.
+                stage='ownership_reconcile'
                 if desktop and self.owner is None:
                     self.units.stop('desktop')
                 previous_stop=self.model.stopped_session
@@ -63,10 +72,29 @@ class HandoffService:
                 if self.owner_session!=self.model.session:
                     self.owner=None;self.owner_session=None;self.ready=False
                 if not desktop:self.ready=False;self.listening=False
+                stage='engine_action_'+result['action']
                 if result['action']=='start_boot':self.units.start('boot')
                 elif result['action']=='stop_boot':self.units.stop('boot')
                 elif result['action']=='stop_desktop':self.units.stop('desktop');self.ready=False
-            except Exception:
+                observer=getattr(self,'desktop_listening_observer',None)
+                if (observer is not None and self.model.state=='desktop_owned' and self.owner
+                        and self.owner_session==self.model.session and self.listening and not self.startup_error
+                        and self.model.stopped_session!=self.model.session):
+                    try:
+                        observer(self.model.session)
+                        self._receipt_error=None
+                    except Exception as error:
+                        if getattr(self,'_receipt_error',None)!=type(error).__name__:
+                            print('Enrollment receipt completion pending: '+type(error).__name__,flush=True)
+                            self._receipt_error=type(error).__name__
+                if self._observation_error is not None:
+                    print('Remote-login observation recovered.',flush=True)
+                    self._observation_error=None
+            except Exception as error:
+                failure=(stage,type(error).__name__)
+                if self._observation_error!=failure:
+                    print('Remote-login observation failed at '+stage+': '+failure[1]+'. Capture suspended; observation will retry.',flush=True)
+                    self._observation_error=failure
                 self.boot_listening=False
                 self.model.state='error';self.model.available=False;self.ready=False;self.boot_ready=False;self.listening=False
                 # A failed observation is not permission to continue capture.

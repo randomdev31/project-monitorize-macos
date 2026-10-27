@@ -80,6 +80,8 @@ def build_service(settings,bus):
     service=HandoffService(settings.uid,LogindSessions(transport),units,
         journal=StopJournal(settings.uid,Path("/proc/sys/kernel/random/boot_id").read_text().strip()))
     service.model.enabled=settings.enabled
+    from .live_setup import complete_for_session
+    service.desktop_listening_observer=lambda session:complete_for_session(settings.uid,session)
     service.output_name=reserved_output
     def display_timeout():
         try:return read_settings().display_idle_timeout_seconds
@@ -99,7 +101,8 @@ def build_service(settings,bus):
     def boot_gate(sender,transport,*,idle=False,initial=False):
         from .engine_gate import EngineGate
         from .greeter_display import greeter_context
-        isolate_uid=getattr(settings,'manager','plasmalogin.service')=='gdm.service'
+        isolate_uid=(getattr(settings,'manager','plasmalogin.service') in ('gdm.service','plasmalogin.service')
+                     or not getattr(settings,'create_login_virtual_display',False))
         context=greeter_context(transport,isolate_uid=isolate_uid)
         generation=service.epoch if initial else getattr(service,'boot_generation','')
         if not initial and context!=getattr(service,'boot_owner_context',None):

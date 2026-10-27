@@ -363,6 +363,13 @@ class MonitorizeBackend(QObject):
             self.remoteLoginSetupFinished.emit({'success':False,'message':message})
             self.remoteLoginSetupBlocked.emit(message)
             return
+        if enabled:
+            if getattr(self,'_live_setup',None) is None:
+                from monitorize.desktop.remote_login_setup import RemoteLoginSetupCoordinator
+                self._live_setup=RemoteLoginSetupCoordinator(self)
+                self._live_setup.finished.connect(self.remoteLoginSetupFinished.emit)
+            self._live_setup.begin(True)
+            return
         if self.session.active or self.session.busy or (getattr(self, "_remote_login", None) is not None and self._remote_login.status.get("capture_ready")):
             self.remoteLoginSetupFinished.emit({"success": False, "message": "Stop the current stream before configuring remote login."})
             return
@@ -385,7 +392,7 @@ class MonitorizeBackend(QObject):
         self._background_executor.submit(work)
 
     @pyqtSlot(bool)
-    def configureLoginPrimaryDisplay(self, enabled):
+    def configureLoginVirtualDisplay(self, enabled):
         if self.applyingConfiguration:
             self.remoteLoginSetupFinished.emit({"success":False,"message":"Wait for Apply or Restart to finish before changing login-screen settings."})
             return
@@ -393,11 +400,16 @@ class MonitorizeBackend(QObject):
         self._remote_setup_busy=True
         self.remoteLoginSetupChanged.emit()
         def work():
-            from monitorize.platform.system_setup import apply_login_primary_display
-            try:result=apply_login_primary_display(enabled)
+            from monitorize.platform.system_setup import apply_login_virtual_display
+            try:result=apply_login_virtual_display(enabled)
             except Exception:result={"success":False,"message":"Login-screen settings could not be saved. Check the saved option before retrying."}
             self._remoteLoginSetupWorkerFinished.emit({**result,"primary_display_setting":True})
         self._background_executor.submit(work)
+
+    @pyqtSlot(result=int)
+    def getDisplayIdleTimeout(self):
+        from monitorize.config.settings import load_display_idle_timeout
+        return load_display_idle_timeout()
 
     @pyqtSlot(int)
     def configureDisplayIdleTimeout(self, seconds):
@@ -405,8 +417,8 @@ class MonitorizeBackend(QObject):
         self._remote_setup_busy=True
         self.remoteLoginSetupChanged.emit()
         def work():
-            from monitorize.platform.system_setup import apply_display_idle_timeout
-            try:result=apply_display_idle_timeout(seconds)
+            from monitorize.platform.system_setup import apply_general_display_idle_timeout
+            try:result=apply_general_display_idle_timeout(seconds)
             except Exception:result={"success":False,"message":"Display timeout could not be saved. Refresh Settings before retrying."}
             self._remoteLoginSetupWorkerFinished.emit({**result,"timeout_setting":True})
         self._background_executor.submit(work)
@@ -414,7 +426,9 @@ class MonitorizeBackend(QObject):
     def _finish_remote_login_setup(self, result):
         if self._closing:
             return
-        self._remote_setup_busy = False
+        result=dict(result)
+        live_pending=result.pop('_live_pending',False)
+        if not live_pending:self._remote_setup_busy = False
         if result.get('primary_display_setting') or result.get('timeout_setting'):
             # This changes next boot only. Preserve the active desktop runtime.
             self.remoteLoginSetupChanged.emit()
@@ -422,12 +436,24 @@ class MonitorizeBackend(QObject):
             return
         from monitorize.desktop.remote_login_runtime import RemoteLoginRuntime
         previous_enabled=self.remoteLoginEnabled
-        if self._remote_login is not None:
-            self._remote_login.close()
         # A timeout or partial user-unit failure can follow a successful root
         # enrollment change. Always reread the actual enrollment.
-        self._remote_login = RemoteLoginRuntime(self)
-        self._remote_login.changed.connect(self._remote_login_changed)
+        if live_pending and self._remote_login is not None:
+            self._remote_login.refresh_enrollment()
+        else:
+            if self._remote_login is not None:self._remote_login.close()
+            self._remote_login = RemoteLoginRuntime(self)
+            self._remote_login.changed.connect(self._remote_login_changed)
+        if live_pending and result.get('configured'):
+            self._desktop_fallback_generation+=1
+            self._desktop_fallback_pending=False
+            try:
+                from monitorize.platform.remote_login_identity import desktop_fallback_allowed
+                from monitorize.remote_login.settings import read_settings
+                self._desktop_fallback=desktop_fallback_allowed(read_settings())
+            except (OSError,ValueError):self._desktop_fallback=True
+        if self._desktop_fallback:
+            self._remote_login.timer.stop();self._remote_login.enabled=False
         self._verified_configuration=None
         if self.remoteLoginEnabled:
             for bundle in (self.configuration_state.applied,self.configuration_state.saved,self.configuration_state.draft):
@@ -440,7 +466,7 @@ class MonitorizeBackend(QObject):
             if error:result={**result,'success':False,'partial':True,'message':error}
         self.remoteLoginSetupChanged.emit()
         self._remote_login_changed()
-        self.remoteLoginSetupFinished.emit(result)
+        if not live_pending:self.remoteLoginSetupFinished.emit(result)
 
     def _reconcile_desktop_configuration(self):
         from monitorize.desktop.configuration_state import save_bundle
@@ -615,6 +641,8 @@ class MonitorizeBackend(QObject):
 
     @pyqtSlot()
     def stopSession(self):
+        if getattr(self,'_live_setup',None) is not None and self._live_setup.busy:
+            self._live_setup.cancel()
         if getattr(self,'_desktop_fallback_pending',False):
             self._desktop_fallback_generation+=1
             return
@@ -1354,9 +1382,9 @@ class MonitorizeBackend(QObject):
     def configurationRestartRequired(self):
         return self.configuration_state.restart_required
 
-    @pyqtSlot()
+    @pyqtSlot(result=bool)
     def saveConfigurationForLater(self):
-        if self.applyingConfiguration or self._closing:return
+        if self.applyingConfiguration or self._closing:return False
         try:
             candidate=self.configuration_state.candidate(desktop=self._detected_de,remote_login=self.remoteLoginEnabled)
             from monitorize.desktop.configuration_state import save_bundle
@@ -1364,8 +1392,19 @@ class MonitorizeBackend(QObject):
             self.configuration_state.save_later(candidate)
             self.configurationChanged.emit()
             self.configurationApplyFinished.emit(True,'Changes saved. Restart the session to apply them.')
+            return True
         except Exception as exc:
             self.configurationApplyFinished.emit(False,str(exc))
+            return False
+
+    @pyqtSlot(result=bool)
+    def discardConfigurationChanges(self):
+        if self.applyingConfiguration or self._closing:return False
+        self.configuration_state.discard()
+        self.streamingBackendChanged.emit(self.streamingBackend)
+        self.clientDisplaySettingsChanged.emit()
+        self.configurationChanged.emit()
+        return True
 
     @pyqtProperty(bool, notify=configurationChanged)
     def configurationValid(self):
@@ -1379,7 +1418,7 @@ class MonitorizeBackend(QObject):
 
     @pyqtProperty(bool, notify=configurationChanged)
     def applyingConfiguration(self):
-        return hasattr(self, "_restart") and self._restart.busy
+        return bool(getattr(self,'_remote_setup_busy',False) or (hasattr(self, "_restart") and self._restart.busy))
 
     @pyqtProperty(str, notify=configurationChanged)
     def configurationMessage(self):
@@ -2115,6 +2154,7 @@ class MonitorizeBackend(QObject):
             self.streaming.update_ip(current)
 
     def close(self):
+        if getattr(self,'_live_setup',None) is not None:self._live_setup.cancel()
         if hasattr(self, "_restart"):
             self._restart.cancel()
         self._vkms_pending_preset = None

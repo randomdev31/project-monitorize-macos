@@ -27,7 +27,7 @@ with TemporaryDirectory() as directory,patch.object(lease,'OWNER_UID',os.getuid(
     def worker(uid,environment,payload,timeout):
         assert uid==42
         assert payload['name']=='Virtual-2' and payload['connector_id']==41
-        assert payload['mode']==[1920,1080,60] and timeout<=8
+        assert payload['mode']==[1920,1080,60] and timeout<=10
         return dict(success=True,details=dict(width=1920,height=1080,refresh_rate=60))
     def activate(output,remaining):
         return activate_greeter(SimpleNamespace(manager='sddm.service'),dict(greeter_uid=42,session='g1'),

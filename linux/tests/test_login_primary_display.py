@@ -31,8 +31,8 @@ class OperationTests(unittest.TestCase):
         result=primary.operation(SimpleNamespace(manager='gdm.service'),{},'idle',helper,check)
         self.assertEqual(result,{})
         check.assert_called();self.assertEqual(helper.mock_calls,[])
-    def test_only_gdm_prepare_and_idle_are_supported(self):
-        for manager,operation in [('sddm.service','prepare'),('gdm.service','activate')]:
+    def test_unknown_manager_and_invalid_operations_are_rejected(self):
+        for manager,operation in [('unknown.service','prepare'),('gdm.service','activate')]:
             with self.subTest(manager=manager,operation=operation),self.assertRaises(ValueError):
                 primary.operation(SimpleNamespace(manager=manager),{},operation,Mock(),Mock())
 
@@ -74,15 +74,15 @@ class AuthenticatedOperationTests(unittest.TestCase):
 class RoutingTests(unittest.TestCase):
     def test_opted_in_greeter_never_enters_virtual_prepare_or_idle(self):
         from monitorize.remote_login import wayland_greeter
-        settings=SimpleNamespace(login_primary_display=True,manager='gdm.service')
+        settings=SimpleNamespace(create_login_virtual_display=False,manager='gdm.service')
         for operation in ('prepare','idle'):
             virtual=Mock(side_effect=AssertionError('must not create or remove a virtual display'))
             with patch.object(primary,'operation',return_value={'output_name':'eDP-1'}) as existing:
                 target=wayland_greeter.capture_operation(settings,{},operation,Mock(),Mock(),virtual)
             self.assertEqual(target['output_name'],'eDP-1');existing.assert_called_once();virtual.assert_not_called()
-    def test_default_and_explicit_off_keep_existing_virtual_lifecycle(self):
+    def test_explicit_opt_in_keeps_existing_virtual_lifecycle(self):
         from monitorize.remote_login import wayland_greeter
-        for settings in (SimpleNamespace(),SimpleNamespace(login_primary_display=False)):
+        for settings in (SimpleNamespace(create_login_virtual_display=True),):
             virtual=Mock(return_value={'output_name':'Virtual-2'})
             with patch.object(primary,'operation') as existing:
                 self.assertEqual(wayland_greeter.capture_operation(settings,{},'prepare',Mock(),Mock(),virtual)['output_name'],'Virtual-2')

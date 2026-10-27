@@ -110,7 +110,7 @@ class ActivationTests(unittest.TestCase):
         from monitorize.remote_login.wayland_greeter import greeter_environment
         helper=Mock();helper._active_session.side_effect=RuntimeError('GDM shell is a user service')
         with patch('monitorize.remote_login.wayland_greeter.require_manager',return_value={'manager':'gdm.service','compositor':'gnome'}):
-            session,environment=greeter_environment(SimpleNamespace(manager='gdm.service'),{'session':'c1','greeter_uid':991},helper)
+            session,environment=greeter_environment(SimpleNamespace(manager='gdm.service'),{'session':'c1','greeter_uid':991,'session_type':'wayland'},helper)
         self.assertEqual(session,'c1')
         self.assertEqual(environment['XDG_SESSION_TYPE'],'wayland')
         helper._active_session.assert_not_called()

@@ -16,10 +16,12 @@ class DeliveryTests(unittest.TestCase):
             try:module.stage(Path(d))
             finally:os.umask(previous)
             root=Path(d)
-            for relative in ('usr/lib/monitorize-remote-login/monitorize/remote_login/gdm_context.py',
+            for relative in ('usr/lib/monitorize-remote-login/monitorize/remote_login/kwin_context.py',
+                'usr/lib/monitorize-remote-login/monitorize/remote_login/gdm_context.py',
                 'usr/lib/monitorize-remote-login/monitorize/remote_login/gdm_probe.py',
                 'usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py',
                 'usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py',
+                'usr/lib/monitorize-remote-login/monitorize/remote_login/live_setup.py',
                 'usr/libexec/monitorize/remote-login/entry.py',
                 'usr/lib/systemd/system/monitorize-vkms-boot-display.service',
                 'usr/lib/systemd/system/monitorize-remote-login.service',
@@ -31,6 +33,7 @@ class DeliveryTests(unittest.TestCase):
             for path in root.rglob('*.py'):compile(path.read_text(),str(path),'exec')
             self.assertEqual((root/'usr').stat().st_mode & 0o777,0o755)
             self.assertFalse((root/'usr/lib/monitorize-remote-login/monitorize/desktop').exists())
+            self.assertIn('setup-enable-live',(root/'usr/libexec/monitorize/remote-login/entry.py').read_text())
 
     def test_every_native_builder_stages_same_assets(self):
         for name in ('packaging/rpm/monitorize.spec','packaging/tumbleweed/monitorize.spec',
@@ -69,7 +72,7 @@ class DeliveryTests(unittest.TestCase):
             assets=root/'assets';(assets/'web').mkdir(parents=True)
             host=root/'host/monitorize_vkms';host.mkdir(parents=True)
             (host/'helper.py').write_text('BOOT_DISPLAY_PROTOCOL = 1\n')
-            (host/'boot_display.py').write_text('GREETER_ON_DEMAND_PROTOCOL = 1\nIDLE_DISPLAY_PROTOCOL = 1\n')
+            (host/'boot_display.py').write_text('GREETER_ON_DEMAND_PROTOCOL = 1\nIDLE_DISPLAY_PROTOCOL = 1\nLIVE_ENROLLMENT_PROTOCOL = 1\n')
             (host.parent/'VERSION').write_text('0.3.0\n')
             with patch.object(module.os,'geteuid',return_value=1000),patch.object(module,'exact_kms_engine',return_value=True):
                 module.prepare(root/'stage',binary,assets,vkms_source=host.parent)
@@ -81,6 +84,9 @@ class DeliveryTests(unittest.TestCase):
             self.assertEqual((root/'stage/usr/lib/firewalld/services/monitorize.xml').read_bytes(),
                              (ROOT/'packaging/fedora/monitorize.xml').read_bytes())
             self.assertTrue((root/'stage/etc/ufw/applications.d/monitorize').is_file())
+            import json
+            manifest=json.loads((root/'stage/usr/share/monitorize-vkms/capabilities.json').read_text())
+            self.assertEqual(manifest['remote_login_protocols']['live_enrollment'],1)
 
     def test_source_staging_rejects_missing_idle_protocol_before_creating_output(self):
         path=ROOT/'scripts/stage-remote-login.py'

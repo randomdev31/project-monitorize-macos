@@ -393,6 +393,16 @@ class ClientDisplayLifecycleTest(ClientDisplayRuntimeTest):
         self.exchange(self.request(operation='stream_started'))
         self.assertFalse(slot.grace.isActive())
 
+    def test_disconnect_grace_uses_general_setting_for_manual_app_launch(self):
+        slot = self.runtime.slots[1]
+        slot.owner, slot.request_id = 'alice', 'one'
+        slot.target = {'output_name': 'HEADLESS-1'}
+        with patch('monitorize.config.settings.load_display_idle_timeout', return_value=47):
+            self.assertTrue(self.exchange(self.request(operation='stream_stopped'))['ok'])
+        self.assertEqual(slot.grace.interval(), 47000)
+        self.exchange(self.request(operation='stream_started'))
+        self.assertFalse(slot.grace.isActive())
+
     def test_untracked_engine_cannot_use_shared_runtime_token(self):
         with patch('monitorize.desktop.client_display_runtime.get_sunshine_process', return_value=None), patch.object(self.runtime, '_prepare', side_effect=AssertionError('Untracked peer must not allocate displays')):
             result = self.exchange(self.request())

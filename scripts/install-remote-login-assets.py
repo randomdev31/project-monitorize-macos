@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Explicit root installation/rollback of staged remote-login assets; no activation."""
 import argparse
+import ast
 import json
 import mmap
 import os
@@ -69,16 +70,27 @@ def validate_bundle(stage):
     stage=Path(stage)
     required=(FILES-HOST_FILES)|{'usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py',
+                   'usr/lib/monitorize-remote-login/monitorize/remote_login/live_setup.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/greeter_display.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/display_managers.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/wayland_greeter.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/session_context.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/gdm_context.py',
+                   'usr/lib/monitorize-remote-login/monitorize/remote_login/kwin_context.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/login_primary.py',
                    'usr/share/monitorize/sunshine/assets/web/index.html'}
     for relative in required:
         path=stage/relative
         if not path.is_file() or path.is_symlink():raise ValueError('Missing staged prerequisite: '+relative)
+    for name in ('enrollment.py','login_primary.py'):
+        source=stage/'usr/lib/monitorize-remote-login/monitorize/remote_login'/name
+        declarations=[ast.literal_eval(node.value) for node in ast.parse(source.read_text()).body
+                      if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='LOGIN_DISPLAY_POLICY_PROTOCOL' for t in node.targets)]
+        if declarations != [1] or type(declarations[0]) is not int:
+            raise ValueError('Stage matching login-screen display policy modules.')
+    if ('setup-login-virtual-on' not in (stage/'usr/libexec/monitorize/remote-login/entry.py').read_text()
+            or 'login-virtual-on' not in (stage/'usr/libexec/monitorize/monitorize-system-setup').read_text()):
+        raise ValueError('Stage the fixed login-screen virtual-display setup actions.')
     daemon=stage/'usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py'
     if 'GREETER_ON_DEMAND_PROTOCOL = 1' not in daemon.read_text():
         raise ValueError('Stage the complete on-demand greeter service Python update.')
@@ -103,7 +115,12 @@ def validate_bundle(stage):
         if package.read_bytes()!=executable.read_bytes():raise ValueError('Staged host helper copies do not match.')
         version=(stage/'usr/lib/monitorize-vkms/VERSION').read_text().strip()
         manifest=json.loads((stage/'usr/share/monitorize-vkms/capabilities.json').read_text())
-        if manifest!=dict(schema_version=1,version=version,remote_login_protocols=dict(boot_display=1,greeter_on_demand=1,idle_display=1)):
+        protocols=dict(boot_display=1,greeter_on_demand=1,idle_display=1)
+        declarations=[ast.literal_eval(node.value) for node in ast.parse((host/'boot_display.py').read_text()).body
+                      if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='LIVE_ENROLLMENT_PROTOCOL' for t in node.targets)]
+        if declarations == [1] and type(declarations[0]) is int:
+            protocols['live_enrollment']=1
+        if manifest!=dict(schema_version=1,version=version,remote_login_protocols=protocols):
             raise ValueError('Staged host capabilities manifest does not match its protocols.')
 
 

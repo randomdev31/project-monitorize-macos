@@ -1,5 +1,47 @@
 # Remote login integration status
 
+## Login-screen display policy
+
+The default captures the greeter's existing primary display. **Create virtual
+display at login** is an unchecked opt-in for virtual/headless login. Legacy
+preferences migrate to the new physical default; explicit new choices persist.
+GDM/Mutter and Plasma Login Manager/SDDM with KWin have read-only existing-output
+adapters. Other greeters need the explicit virtual path until an adapter exists.
+No available display produces an error rather than silently enabling a virtual one.
+Desktop virtual-display behavior is unchanged. The protected reserved slot may
+exist disconnected; physical login never activates it.
+
+Both installed policy modules require `LOGIN_DISPLAY_POLICY_PROTOCOL=1`, with the
+matching fixed helper actions. The source bundle validator checks these together.
+The preference retains next-boot application; saving it does not restart streams.
+The current Fedora sample is installed; its checkbox/default and desktop listener
+are verified. Physical-login and headless greeter acceptance remain pending.
+
+## Live enrollment (installed sample; desktop acceptance passed)
+
+Settings now uses the fixed `enable-live` helper action when matching installed
+app and host assets advertise `live_enrollment=1`. On an already initialized host,
+it reserves disconnected mon1 in the current authenticated desktop, starts the
+supervisor and adopts it with the existing GUI participant. Setup succeeds only
+when that participant owns a verified listener. Enrollment does not require reboot,
+logout, GUI relaunch or a display-manager restart. First kernel/topology installation
+is separate. The fixed greeter display mode remains unchanged.
+
+Stop active streams and Display 2 before setup. Only an owned idle Display 1 may be
+paused. Root setup uses a private journal, exact reservation generation and setup
+lock. Retry preserves identity; healthy retry preserves the current D-Bus owner.
+Only masks recorded by a versioned fallback grant, including prior enablement,
+are automatically removed before unit enablement. Custom/ambiguous masks are refused.
+
+Use `docs/REMOTE_LOGIN_ACCEPTANCE.md` for current source paths, staging, deployment
+boundaries and the physical-screen/GDM/SDDM/headless acceptance matrix. Native
+package-owned files need native upgrades; source asset deployment refuses to
+replace them. Source tests pass for the new path; real desktop validation is pending.
+
+The remaining dated sections are historical deployment records. Their next-boot-
+only enrollment instructions describe the legacy `enable` action, retained for
+compatibility, rather than the Settings live-enrollment workflow.
+
 ## Compatible host implementation (2026-10-23)
 
 The companion monitorize-vkms 0.3.0 development tree now implements boot-display,

@@ -29,7 +29,7 @@ Item {
                     color: theme.textPrimary; wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 Text {
-                    text: page.setupStatus.message || "Checking installed service assets…"
+                    text: (!page.setupStatus.live_available && page.setupStatus.live_message) || page.setupStatus.message || "Checking installed service assets…"
                     color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 Text {
@@ -37,7 +37,7 @@ Item {
                     color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 Text {
-                    text: "Setup keeps pairing in protected system storage and starts Monitorize's desktop controller after login. Wi-Fi configuration is a separate step. Reboot after enabling; disabling releases ownership for ordinary desktop streaming."
+                    text: "Setup keeps pairing in protected system storage and enables remote login now and after future boots, without restarting your PC. Wi-Fi configuration is a separate step. Disabling releases ownership for ordinary desktop streaming."
                     color: theme.textSecondary; wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 CustomCheckBox {
@@ -45,13 +45,13 @@ Item {
                     objectName: "remoteLoginConsent"
                     text: "Enable access to this account's login screen for my paired clients."
                     Layout.fillWidth: true
-                    enabled: !backend.remoteLoginSetupBusy && page.setupStatus.available && page.setupStatus.supported
+                    enabled: !backend.remoteLoginSetupBusy && page.setupStatus.available && page.setupStatus.supported && page.setupStatus.live_available
                 }
                 RowLayout {
                     CustomButton {
                         objectName: "remoteLoginEnable"
                         text: backend.remoteLoginSetupBusy ? "Working…" : page.setupStatus.enabled ? "Re-run setup" : "Enable"
-                        enabled: !backend.remoteLoginSetupBusy && consent.checked && page.setupStatus.available && page.setupStatus.supported
+                        enabled: !backend.remoteLoginSetupBusy && consent.checked && page.setupStatus.available && page.setupStatus.supported && page.setupStatus.live_available
                         onClicked: backend.configureRemoteLogin(true)
                     }
                     CustomButton {

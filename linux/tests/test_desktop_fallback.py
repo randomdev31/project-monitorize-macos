@@ -37,6 +37,7 @@ class FallbackHandoffTests(unittest.TestCase):
         settings=SimpleNamespace(uid=1000)
         calls=[]
         command=Mock()
+        command.enabled.side_effect=lambda name:name=='monitorize-remote-login.service'
         def run(args):
             calls.append(('command',args))
             return 'masked' if args[1]=='show' else ''
@@ -51,13 +52,16 @@ class FallbackHandoffTests(unittest.TestCase):
         self.assertEqual(mutations[1][1][1],'stop')
         self.assertEqual(calls[-2],('release',1000,{'release':True}))
         self.assertEqual(calls[-1][0],'grant')
-        self.assertEqual(json.loads(calls[-1][1][1])['session'],'s1')
+        grant=json.loads(calls[-1][1][1])
+        self.assertEqual(grant['session'],'s1')
+        self.assertTrue(grant['unit_enablement']['monitorize-remote-login.service'])
+        self.assertFalse(grant['unit_enablement']['monitorize-remote-login-desktop@1000.service'])
 
     def test_release_failure_never_publishes_fallback_permission(self):
         import sys
         from monitorize.remote_login import enrollment
         helper=SimpleNamespace(_active_session=lambda uid:('s1',{}))
-        with patch.object(enrollment,'read_settings',return_value=SimpleNamespace(uid=1000)), patch.dict(sys.modules,{'monitorize_vkms':SimpleNamespace(helper=helper)}), patch.object(enrollment,'Commands',return_value=SimpleNamespace(run=lambda args:'masked')), patch.object(enrollment,'RootFiles') as files, patch.object(enrollment,'remove_reserved',side_effect=RuntimeError('capture still active')):
+        with patch.object(enrollment,'read_settings',return_value=SimpleNamespace(uid=1000)), patch.dict(sys.modules,{'monitorize_vkms':SimpleNamespace(helper=helper)}), patch.object(enrollment,'Commands',return_value=SimpleNamespace(run=lambda args:'masked',enabled=lambda name:False)), patch.object(enrollment,'RootFiles') as files, patch.object(enrollment,'remove_reserved',side_effect=RuntimeError('capture still active')):
             with self.assertRaisesRegex(RuntimeError,'capture still active'):enrollment.desktop_fallback(1000)
             files.assert_not_called()
 
@@ -78,7 +82,7 @@ class FallbackHandoffTests(unittest.TestCase):
             if args[1]=='unmask':masked.difference_update(args[3:])
             return ''
         helper=SimpleNamespace(_active_session=lambda uid:('s1',{}))
-        with patch.object(enrollment,'read_settings',return_value=SimpleNamespace(uid=1000)), patch.dict(sys.modules,{'monitorize_vkms':SimpleNamespace(helper=helper)}), patch.object(enrollment,'Commands',return_value=SimpleNamespace(run=run)), patch.object(enrollment,'RootFiles') as files, patch.object(enrollment,'remove_reserved',side_effect=RuntimeError('capture still active')):
+        with patch.object(enrollment,'read_settings',return_value=SimpleNamespace(uid=1000)), patch.dict(sys.modules,{'monitorize_vkms':SimpleNamespace(helper=helper)}), patch.object(enrollment,'Commands',return_value=SimpleNamespace(run=run,enabled=lambda name:name==supervisor)), patch.object(enrollment,'RootFiles') as files, patch.object(enrollment,'remove_reserved',side_effect=RuntimeError('capture still active')):
             with self.assertRaisesRegex(RuntimeError,'capture still active'):enrollment.desktop_fallback(1000)
             files.assert_not_called()
         self.assertEqual(masked,{boot})
