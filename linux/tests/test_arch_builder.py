@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -22,7 +23,27 @@ REQUIRED = (
     "smoke-test.sh",
     "monitorize.install",
     "monitorize-wrapper",
+    "monitorize-remote-login-guard.hook",
 )
+
+
+class ArchRecipeStagingTest(unittest.TestCase):
+    def test_recipe_stages_every_package_startdir_input(self) -> None:
+        builder = (ARCH_DIR / "build.sh").read_text()
+        staging = re.search(r'for helper in .*?\ndone', builder, re.DOTALL).group()
+        recipe = (ARCH_DIR / "PKGBUILD").read_text()
+        inputs = re.findall(r'\$\{startdir\}/([^"\s]+)', recipe.split('package() {', 1)[1])
+        self.assertIn("monitorize-remote-login-guard.hook", inputs)
+        for cuda in ("0", "1"):
+            with self.subTest(cuda=cuda), tempfile.TemporaryDirectory() as directory:
+                subprocess.run(
+                    ["bash", "-eu", "-c", staging], check=True,
+                    env={**os.environ, "SCRIPT_DIR": str(ARCH_DIR),
+                         "recipe_root": directory, "MONITORIZE_ENABLE_CUDA": cuda},
+                )
+                for name in inputs:
+                    self.assertEqual((Path(directory) / name).read_bytes(),
+                                     (ARCH_DIR / name).read_bytes())
 
 
 class ArchBuilderPreflightTest(unittest.TestCase):
@@ -112,6 +133,14 @@ class ArchBuilderPreflightTest(unittest.TestCase):
         result = self.run_builder(image_exists=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Missing prepared image", result.stderr)
+        self.assertNotIn("run ", self.podman_log.read_text())
+
+    def test_missing_package_hook_fails_before_container_start(self) -> None:
+        self.git(self.checkout, "rm", "packaging/arch/monitorize-remote-login-guard.hook")
+        self.git(self.checkout, "commit", "-qm", "Remove package hook")
+        result = self.run_builder(image_exists=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Commit packaging/arch/monitorize-remote-login-guard.hook", result.stderr)
         self.assertNotIn("run ", self.podman_log.read_text())
 
     def test_no_cuda_offline_requires_a_separate_prepared_image(self) -> None:
