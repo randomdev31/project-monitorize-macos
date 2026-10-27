@@ -28,9 +28,15 @@ class ParticipantTests(unittest.TestCase):
 
     def test_desktop_descriptor_carries_saved_client_mode_policy(self):
         interface=Interface();participant=Participant(factory=lambda:interface,output_finder=lambda:'Virtual-4')
+        # This descriptor test targets the current service API. Advertising the
+        # legacy API would read/write an installed profile on the test machine.
+        original=interface.GetStatus
+        interface.GetStatus=lambda **kwargs:json.dumps({**json.loads(original()),'desktop_options_version':1})
         participant.interface=interface;participant.factory=None;participant.stream_options={}
-        with patch('monitorize.config.settings.load_display_settings',return_value=dict(use_client_display_settings=True,resolution='2340x1600',fps='90')):
+        with patch('monitorize.config.settings.load_display_settings',return_value=dict(use_client_display_settings=True,resolution='2340x1600',fps='90')), \
+             patch('monitorize.desktop.remote_login_runtime.legacy_stream_options') as legacy:
             participant.poll()
+        legacy.assert_not_called()
         values=[call[1] for call in interface.calls if isinstance(call,tuple)][0]
         self.assertTrue(values['client_display_mode']);self.assertEqual(values['display_mode'],[2340,1600,90.0])
 
