@@ -14,7 +14,7 @@ import asyncio,os,sys
 from pathlib import Path
 from monitorize.streaming.recovery_guardian import Guardian
 from monitorize.platform.session_layout import LayoutTransaction
-from test_additional_layout_backends import XServer,NiriServer,xoutput
+from linux.tests.test_additional_layout_backends import XServer,NiriServer,xoutput
 path,events,journal,owner,desktop=sys.argv[1:]
 class Backend(XServer if desktop=='x11' else NiriServer):
     def restore(self,snapshot,owned):
@@ -57,7 +57,9 @@ class AdditionalGuardianProcessTests(unittest.TestCase):
                 directory=Path(tmp);manager=directory/'manager.py';manager.write_text(MANAGER)
                 events=directory/'events';path=str(directory/'control.sock')
                 env={**os.environ,'XDG_STATE_HOME':tmp,'XDG_CONFIG_HOME':tmp,
-                     'XDG_SESSION_TYPE':'x11' if desktop=='x11' else 'wayland'}
+                     'XDG_SESSION_TYPE':'x11' if desktop=='x11' else 'wayland',
+                     'PYTHONPATH':os.pathsep.join([str(Path(__file__).resolve().parents[2]),
+                         str(Path(__file__).resolve().parents[1]),os.environ.get('PYTHONPATH','')])}
                 gui=subprocess.Popen([sys.executable,'-c',GUI,str(manager),path,str(events),str(directory/'journal'),desktop],
                     env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
                 pid=None

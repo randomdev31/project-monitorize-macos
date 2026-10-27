@@ -221,6 +221,7 @@ Rectangle {
     Theme {
         id: theme
         mode: backend ? backend.themeMode : "system"
+        systemDarkFallback: backend ? backend.systemThemeDark : false
         useSystemAccent: backend ? backend.useSystemAccent : false
         systemAccentColors: backend ? backend.systemAccentColors : ({})
     }

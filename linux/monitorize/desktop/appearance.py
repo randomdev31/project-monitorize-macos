@@ -38,14 +38,31 @@ def accent_colors(color, dark):
     }
 
 
+def system_dark(app):
+    """Read Qt's scheme when supported, otherwise retain the native startup palette."""
+    if app is None:
+        return False
+    hints = app.styleHints() if hasattr(app, 'styleHints') else None
+    read_scheme = getattr(hints, 'colorScheme', None)
+    if callable(read_scheme) and hasattr(Qt, 'ColorScheme'):
+        return read_scheme() == Qt.ColorScheme.Dark
+    if not hasattr(app, '_monitorize_system_palette'):
+        if not hasattr(app, 'palette'):
+            return False
+        app._monitorize_system_palette = QPalette(app.palette())
+    return app._monitorize_system_palette.color(QPalette.ColorRole.Window).lightness() < 128
+
+
 def apply_palette(app, mode="system", use_system_accent=None):
     from monitorize.config.settings import load_general_settings
     from monitorize.desktop.system_accent import system_accent
     source = system_accent(app)
     if use_system_accent is None:
         use_system_accent = load_general_settings().get("use_system_accent", False)
-    dark = mode == "dark" or (mode == "system" and
-                             app.styleHints().colorScheme() == Qt.ColorScheme.Dark)
+    # Preserve the platform palette before any explicit application override.
+    if not hasattr(app, '_monitorize_system_palette'):
+        app._monitorize_system_palette = QPalette(app.palette())
+    dark = mode == "dark" or (mode == "system" and system_dark(app))
     palette = QPalette()
     colors = {
         "Window": "#202324" if dark else "#eff0f1",

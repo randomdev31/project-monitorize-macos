@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import tempfile
@@ -14,6 +15,29 @@ from monitorize.desktop.backend import MonitorizeBackend
 
 
 class SettingsTest(unittest.TestCase):
+    def draft_backend(self):
+        """Exercise the real draft methods without starting platform services."""
+        from monitorize.desktop.configuration_state import ConfigurationState
+        state = ConfigurationState(settings.load_display_settings(),
+            settings.load_second_display_settings(), settings.load_general_settings())
+        backend = SimpleNamespace(
+            applyingConfiguration=False, isStreaming=False, sessionBusy=False,
+            _closing=False, _web_settings_enabled=False, _sunshine_settings_revision=0,
+            configuration_state=state,
+            configurationChanged=SimpleNamespace(emit=Mock()),
+            sunshineSettingsRevisionChanged=SimpleNamespace(emit=Mock()),
+            clientDisplaySettingsChanged=SimpleNamespace(emit=Mock()),
+            streaming=SimpleNamespace(third_streaming=False),
+            session=SimpleNamespace(preset_configuration=None, configuration_changed=Mock()),
+        )
+        backend.loadDisplaySettings = lambda: copy.deepcopy(state.draft['primary'])
+        backend.loadSecondDisplaySettings = lambda: copy.deepcopy(state.draft['second'])
+        backend._update_draft = lambda group, values: MonitorizeBackend._update_draft(backend, group, values)
+        backend._prepare_sunshine_choices = lambda instance, values: MonitorizeBackend._prepare_sunshine_choices(backend, instance, values)
+        backend.saveSunshineDisplaySettings = Mock(side_effect=lambda instance, values, sync_adapter=True:
+            MonitorizeBackend.saveSunshineDisplaySettings(backend, instance, values, sync_adapter))
+        return backend
+
     def test_general_preferences_survive_fresh_process_legacy_group_migration(self):
         from pathlib import Path
         Path(self.config_file).write_text('[%General]\nminimize_to_tray=true\nsystem_setup_decided=false\n')
@@ -97,20 +121,24 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(preset["primary"]["resolution"], "2560x1600")
 
     def test_backend_card_round_trip_preserves_independent_listener_selection(self):
-        fake = SimpleNamespace(isStreaming=False, sessionBusy=False,
-            clientDisplaySettingsChanged=SimpleNamespace(emit=Mock()),
-            streaming=SimpleNamespace(third_streaming=False),
-            session=SimpleNamespace(preset_configuration=None, configuration_changed=Mock()))
+        fake = self.draft_backend()
         MonitorizeBackend.saveVirtualDisplaySettings(fake, [
             {"id": 1, "resolution": "2560x1440", "fps": "90", "use_client_display_settings": True},
             {"id": 2, "resolution": "1920x1080", "fps": "60", "use_client_display_settings": False}])
         cards = MonitorizeBackend.loadVirtualDisplaySettings(fake)
         self.assertTrue(cards[0]["use_client_display_settings"])
         self.assertFalse(cards[1]["use_client_display_settings"])
+        before = copy.deepcopy(fake.configuration_state.applied)
         fake.isStreaming = True
         MonitorizeBackend.saveVirtualDisplaySettings(fake, [{"use_client_display_settings": False}])
-        self.assertTrue(settings.load_display_settings()["use_client_display_settings"])
-        self.assertTrue(settings.load_second_display_settings()["enabled"])
+        self.assertFalse(fake.configuration_state.draft['primary']['use_client_display_settings'])
+        self.assertEqual(fake.configuration_state.applied, before)
+        self.assertFalse(settings.load_display_settings()['use_client_display_settings'])
+        self.assertFalse(settings.load_second_display_settings()['enabled'])
+        fake.applyingConfiguration = True
+        draft = copy.deepcopy(fake.configuration_state.draft)
+        MonitorizeBackend.saveVirtualDisplaySettings(fake, [{"use_client_display_settings": True}])
+        self.assertEqual(fake.configuration_state.draft, draft)
 
     def test_display_settings_round_trip(self):
         settings.save_display_settings(
@@ -186,65 +214,40 @@ class SettingsTest(unittest.TestCase):
         settings.save_display_settings(resolution="1920x1080", sunshine_capture="invalid")
         self.assertEqual(settings.load_display_settings()["sunshine_capture"], "auto")
 
-    def test_backend_saves_each_sunshine_instance_independently(self):
-        changed = []
-        backend = SimpleNamespace(
-            isStreaming=False, sessionBusy=False, _web_settings_enabled=False,
-            _sunshine_settings_revision=0,
-            sunshineSettingsRevisionChanged=SimpleNamespace(emit=Mock()),
-            session=SimpleNamespace(preset_configuration=None,
-                                    configuration_changed=lambda: changed.append(True)),
-        )
+    def test_backend_stages_each_sunshine_instance_independently(self):
         settings.save_display_settings(resolution="1920x1080")
         settings.save_second_display_settings(enabled=True, resolution="1920x1080")
-        MonitorizeBackend.saveSunshineDisplaySettings(
-            backend, 1, {"sunshine_capture": "portal", "sunshine_encoder": "NVIDIA"}
-        )
-        MonitorizeBackend.saveSunshineDisplaySettings(
-            backend, 2, {"sunshine_capture": "kms", "sunshine_encoder": "VA-API"}
-        )
-        self.assertEqual(settings.load_display_settings()["sunshine_capture"], "portal")
-        self.assertEqual(settings.load_second_display_settings()["sunshine_capture"], "kms")
-        self.assertEqual(settings.load_display_settings()["sunshine_encoder"], "NVIDIA")
-        self.assertEqual(settings.load_second_display_settings()["sunshine_encoder"], "VA-API")
-        self.assertEqual(len(changed), 2)
+        backend = self.draft_backend()
+        before = copy.deepcopy(backend.configuration_state.applied)
+        with patch("monitorize.desktop.backend.save_sunshine_config") as write:
+            backend.saveSunshineDisplaySettings(1, {"sunshine_capture": "portal", "sunshine_encoder": "NVIDIA"})
+            backend.saveSunshineDisplaySettings(2, {"sunshine_capture": "kms", "sunshine_encoder": "VA-API"})
+        primary = backend.loadDisplaySettings()
+        second = backend.loadSecondDisplaySettings()
+        self.assertEqual((primary['sunshine_capture'], primary['sunshine_encoder']), ('portal', 'NVIDIA'))
+        self.assertEqual((second['sunshine_capture'], second['sunshine_encoder']), ('kms', 'VA-API'))
+        self.assertEqual(backend.configuration_state.applied, before)
+        self.assertEqual(settings.load_display_settings()['sunshine_encoder'], 'Auto')
+        self.assertEqual(settings.load_second_display_settings()['sunshine_encoder'], 'Auto')
+        write.assert_not_called()
 
-    def test_sunshine_choice_snapshot_writes_one_patch_and_skips_repeat(self):
-        settings.save_display_settings(
-            resolution="1920x1080",
-            sunshine_encoder="Auto", sunshine_codec="Auto",
-            sunshine_native_pen_touch=True, enable_audio=False,
-        )
-        fake = SimpleNamespace(
-            isStreaming=False, sessionBusy=False, _closing=False,
-            _web_settings_enabled=False,
-            saveSunshineDisplaySettings=Mock(),
-        )
-        fake._prepare_sunshine_choices = lambda instance, submitted: (
-            MonitorizeBackend._prepare_sunshine_choices(fake, instance, submitted)
-        )
-        choices = {
-            "sunshine_encoder": "NVIDIA", "sunshine_codec": "HEVC",
-            "sunshine_capture": "kwin", "sunshine_gpu": "",
-            "streaming_customized": True,
-            "sunshine_native_pen_touch": True, "enable_audio": False,
-        }
-        current = {}
-        with (patch("monitorize.desktop.backend.get_saved_sunshine_config", side_effect=lambda _instance: current),
-              patch("monitorize.desktop.backend.save_sunshine_config", return_value=(True, "")) as write):
-            result = MonitorizeBackend.saveSunshineChoices(fake, 1, choices)
-            self.assertTrue(result["success"])
-            write.assert_called_once()
-            patch_values = write.call_args.args[0]
-            self.assertEqual(patch_values["encoder"], "nvenc")
-            self.assertEqual((patch_values["hevc_mode"], patch_values["av1_mode"]), ("2", "1"))
-            fake.saveSunshineDisplaySettings.assert_called_once_with(1, choices, sync_adapter=False)
-            current.update(patch_values)
-            settings.save_display_settings(resolution="1920x1080", **choices)
-            write.reset_mock()
-            result = MonitorizeBackend.saveSunshineChoices(fake, 1, choices)
-            self.assertTrue(result["success"])
+    def test_sunshine_choices_update_draft_without_writing_engine_config(self):
+        settings.save_display_settings(resolution="1920x1080", sunshine_encoder="Auto",
+            sunshine_codec="Auto", sunshine_native_pen_touch=True, enable_audio=False)
+        backend = self.draft_backend()
+        choices = dict(sunshine_encoder="NVIDIA", sunshine_codec="HEVC", sunshine_capture="kwin",
+            sunshine_gpu="", streaming_customized=True, sunshine_native_pen_touch=True, enable_audio=False)
+        before = copy.deepcopy(backend.configuration_state.applied)
+        with patch("monitorize.desktop.backend.save_sunshine_config") as write:
+            for _ in range(2):
+                result = MonitorizeBackend.saveSunshineChoices(backend, 1, choices)
+                self.assertTrue(result['success'])
+                self.assertEqual({key: backend.loadDisplaySettings()[key] for key in choices}, choices)
             write.assert_not_called()
+        self.assertEqual(backend.configuration_state.applied, before)
+        self.assertEqual(settings.load_display_settings()['sunshine_encoder'], 'Auto')
+        backend.applyingConfiguration = True
+        self.assertFalse(MonitorizeBackend.saveSunshineChoices(backend, 1, choices)['success'])
 
     def test_v1_wifi_preset_migrates_and_usb_preset_is_dropped(self):
         store = QSettings(self.config_file, QSettings.Format.IniFormat)

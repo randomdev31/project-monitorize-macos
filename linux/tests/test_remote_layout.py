@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from monitorize.desktop.remote_layout import RemoteLayout
 from monitorize.desktop.remote_login_runtime import Participant
 from monitorize.platform.session_layout import LayoutTransaction
-from test_session_layout import SimulatedKde, output
+from linux.tests.test_session_layout import SimulatedKde, output
 
 
 class Bridge:

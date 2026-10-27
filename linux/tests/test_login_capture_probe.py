@@ -1,4 +1,5 @@
 """Pre-login capture must never silently select another output/session."""
+import os
 import json
 from pathlib import Path
 import tempfile
@@ -69,7 +70,7 @@ class LoginCaptureProbeTest(unittest.TestCase):
             process=Mock(pid=12345, returncode=None)
             process.poll.return_value=None
             phase=Mock(side_effect=['greeter','user'])
-            with patch.object(probe,'require_root_file'), patch.object(probe.os,'geteuid',return_value=1000), \
+            with patch.object(probe,'require_root_file'), patch.object(probe.os,'geteuid',return_value=os.getuid()), \
                  patch.object(probe.os,'access',return_value=True), \
                  patch.object(probe.subprocess,'run',return_value=Mock(stdout='sunshine cap_sys_admin=p')), \
                  patch.object(probe.subprocess,'Popen',return_value=process) as launch, \
@@ -90,7 +91,7 @@ class LoginCaptureProbeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             (root/'runtime').mkdir()
-            with patch.object(probe,'require_root_file'), patch.object(probe.os,'geteuid',return_value=1000), \
+            with patch.object(probe,'require_root_file'), patch.object(probe.os,'geteuid',return_value=os.getuid()), \
                  patch.object(probe.os,'access',return_value=True), \
                  patch.object(probe.subprocess,'run',return_value=Mock(stdout='sunshine cap_sys_admin=p')), \
                  patch.object(probe.subprocess,'Popen') as launch:
@@ -103,7 +104,7 @@ class LoginCaptureProbeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             (root/'runtime').mkdir()
-            with patch.object(probe,'require_root_file'), patch.object(probe.os,'geteuid',return_value=1000), \
+            with patch.object(probe,'require_root_file'), patch.object(probe.os,'geteuid',return_value=os.getuid()), \
                  patch.object(probe.os,'access',return_value=True), \
                  patch.object(probe.subprocess,'run',return_value=Mock(stdout='sunshine cap_sys_admin=p')), \
                  patch.object(probe.subprocess,'Popen') as launch, \

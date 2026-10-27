@@ -106,7 +106,7 @@ class LegacyStreamOptionsTests(unittest.TestCase):
 class ResumeOwnershipTests(unittest.TestCase):
     def setUp(self):
         from monitorize.remote_login.service import HandoffService
-        from test_remote_login_service import Sessions,Units
+        from linux.tests.test_remote_login_service import Sessions,Units
         self.sessions=Sessions();self.sessions.user=True
         self.active=True
         original=self.sessions.snapshot

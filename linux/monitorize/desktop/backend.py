@@ -167,7 +167,9 @@ class MonitorizeBackend(QObject):
         self._accent_source = system_accent(QGuiApplication.instance())
         self._accent_source.changed.connect(self._on_system_accent_changed)
         if isinstance(QGuiApplication.instance(), QGuiApplication):
-            QGuiApplication.styleHints().colorSchemeChanged.connect(self._on_system_accent_changed)
+            scheme_changed = getattr(QGuiApplication.styleHints(), 'colorSchemeChanged', None)
+            if scheme_changed is not None:
+                scheme_changed.connect(self._on_system_accent_changed)
         general = load_general_settings()
         if general.get("use_system_accent", False):
             self._accent_source.refresh()
@@ -1588,12 +1590,16 @@ class MonitorizeBackend(QObject):
     def useSystemAccent(self):
         return load_general_settings().get("use_system_accent", False)
 
+    @pyqtProperty(bool, notify=accentChanged)
+    def systemThemeDark(self):
+        from monitorize.desktop.appearance import system_dark
+        return system_dark(QGuiApplication.instance())
+
     @pyqtProperty("QVariantMap", notify=accentChanged)
     def systemAccentColors(self):
-        from monitorize.desktop.appearance import accent_colors
-        from PyQt6.QtCore import Qt
+        from monitorize.desktop.appearance import accent_colors, system_dark
         dark = self.themeMode == "dark" or (self.themeMode == "system" and
-               QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark)
+               system_dark(QGuiApplication.instance()))
         return accent_colors(self._accent_source.color, dark)
 
     @pyqtSlot(bool)

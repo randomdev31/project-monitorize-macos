@@ -677,9 +677,9 @@ exit 0
     def test_add_display_uses_the_same_two_card_limit_in_vkms_mode(self):
         qml = (ROOT / "linux/monitorize/qml/DisplaySetupPage.qml").read_text()
         button = qml.split("id: addDisplayButton", 1)[1].split("SectionCard {", 1)[0]
-        self.assertIn("enabled: !backend.sessionBusy", button)
+        self.assertIn("enabled: !backend.applyingConfiguration", button)
         self.assertNotIn("!page.vkmsSelected", button)
-        self.assertIn('color: addDisplayButton.enabled ? "#94caff" : theme.textMuted', button)
+        self.assertIn('color: addDisplayButton.enabled ? theme.headingText : theme.textMuted', button)
         self.assertIn("addDisplayButton.enabled && addDisplayButton.hovered", button)
         self.assertIn("if (virtualDisplays.length >= 2) return", qml)
         self.assertNotIn("Creates up to two displays using Linux's experimental VKMS path", qml)

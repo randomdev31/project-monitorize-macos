@@ -15,7 +15,7 @@ from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtQml import QQmlEngine,QQmlComponent
 from monitorize.config.settings import load_general_settings,save_general_settings
-from monitorize.desktop.appearance import apply_palette
+from monitorize.desktop.appearance import apply_palette,system_dark
 app=QApplication([])
 with tempfile.TemporaryDirectory() as d:
     os.environ['XDG_CONFIG_HOME']=d
@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as d:
     theme=component.create()
     assert theme, [e.toString() for e in component.errors()]
     accent=None
-    for mode,dark in [('dark',True),('light',False),('system',app.styleHints().colorScheme()==Qt.ColorScheme.Dark)]:
+    for mode,dark in [('dark',True),('light',False),('system',system_dark(app))]:
         save_general_settings(theme_mode=mode)
         assert load_general_settings()['theme_mode']==mode
         theme.setProperty('mode',mode)
@@ -40,11 +40,14 @@ with tempfile.TemporaryDirectory() as d:
         accent=current
         assert theme.property('background').lightness() < 128 if dark else theme.property('background').lightness() > 128
     theme.setProperty('mode','system')
-    for scheme,expected in [(Qt.ColorScheme.Dark,True),(Qt.ColorScheme.Light,False)]:
-        app.styleHints().setColorScheme(scheme)
-        app.processEvents()
-        # Platforms may decline an explicit scheme request; follow the reported value.
-        assert theme.property('dark')==(app.styleHints().colorScheme()==Qt.ColorScheme.Dark)
+    if hasattr(app.styleHints(),'setColorScheme'):
+        for scheme,expected in [(Qt.ColorScheme.Dark,True),(Qt.ColorScheme.Light,False)]:
+            app.styleHints().setColorScheme(scheme)
+            app.processEvents()
+            assert theme.property('dark')==system_dark(app)
+    else:
+        theme.setProperty('systemDarkFallback',system_dark(app))
+        assert theme.property('dark')==system_dark(app)
     save_general_settings(minimize_to_tray=True)
     assert load_general_settings()['theme_mode']=='system'
     try:save_general_settings(theme_mode='invalid')
@@ -57,3 +60,16 @@ with tempfile.TemporaryDirectory() as d:
         env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software", PYTHONDONTWRITEBYTECODE="1")
         result = subprocess.run([sys.executable, "-c", program], env=env, text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_qt64_fallback_preserves_native_palette_across_overrides(self):
+        from types import SimpleNamespace
+        from PyQt6.QtGui import QColor, QPalette
+        from monitorize.desktop.appearance import system_dark
+        for dark in (False, True):
+            with self.subTest(dark=dark):
+                palette = QPalette()
+                palette.setColor(QPalette.ColorRole.Window, QColor('#202324' if dark else '#eff0f1'))
+                app = SimpleNamespace(styleHints=lambda: SimpleNamespace(), palette=lambda: palette)
+                self.assertEqual(system_dark(app), dark)
+                palette.setColor(QPalette.ColorRole.Window, QColor('#eff0f1' if dark else '#202324'))
+                self.assertEqual(system_dark(app), dark)

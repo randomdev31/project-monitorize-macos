@@ -5,7 +5,10 @@ QtObject {
     property bool useSystemAccent: false
     property var systemAccentColors: ({})
     property string mode: "system"
-    readonly property bool dark: mode === "dark" || (mode === "system" && Qt.styleHints.colorScheme === Qt.Dark)
+    property bool systemDarkFallback: false
+    readonly property bool systemDark: typeof Qt.styleHints !== "undefined" && Qt.styleHints.colorScheme !== undefined
+        ? Qt.styleHints.colorScheme === Qt.Dark : systemDarkFallback
+    readonly property bool dark: mode === "dark" || (mode === "system" && systemDark)
     // Breeze-inspired neutral surfaces; blue action accents stay unchanged.
     // Keep the base quiet and reserve blue for actions and active states.
 
