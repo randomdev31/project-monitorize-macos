@@ -1,8 +1,48 @@
 """Validate the installed fork's exact-output contract without executing it."""
 import mmap
+import hashlib
+from functools import lru_cache
 from pathlib import Path
+import shlex
 
 MARKERS=(b'MONITORIZE_CONTROL_PROTOCOL=1',b'MONITORIZE_STRICT_KMS_OUTPUT_MISSING')
+ENGINE=Path('/usr/libexec/monitorize/sunshine')
+
+
+@lru_cache(maxsize=8)
+def _engine_digest(path,metadata):
+    # File identity/timestamps invalidate the cache after rebuild, install or rollback.
+    with path.open('rb') as source:
+        return hashlib.file_digest(source,'sha256').digest()
+
+
+def matching_engines(source,installed=ENGINE):
+    """Compare bytes without executing either binary or depending on debug symbols."""
+    def digest(path):
+        path=Path(path);info=path.stat()
+        return _engine_digest(path,(info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns))
+    try:return digest(source)==digest(installed)
+    except OSError:return False
+
+
+def source_engine_update_error(*,repository=None,installed=ENGINE):
+    """Only a source checkout with its own installed engine needs synchronization."""
+    repository=Path(repository) if repository is not None else Path(__file__).resolve().parents[3]
+    if not (repository/'linux/scripts/install.sh').is_file():return ''
+    from monitorize.platform.sunshine_service import _sunshine_bundles,get_sunshine_candidates
+    candidates=get_sunshine_candidates()
+    if not candidates:return ''
+    source=Path(candidates[0][0])
+    if not source.is_relative_to(repository):return ''
+    if matching_engines(source,installed):return ''
+    assets=dict(_sunshine_bundles())[str(source)]
+    command=shlex.join(['python3',str(repository/'scripts/stage-remote-login.py'),
+        '--sunshine',str(source),'--assets',assets])
+    return ('The source desktop engine and installed remote-login engine differ. '
+            'Prepare updated service assets with: '+command+
+            '. Fully quit Monitorize, run the printed administrator install commands, then reopen it. '
+            'For package-owned service assets, upgrade the native Monitorize package instead. '
+            'Source rebuilds do not replace the privileged engine automatically.')
 
 
 def exact_kms_engine(path):

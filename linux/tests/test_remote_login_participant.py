@@ -16,6 +16,17 @@ class Interface:
 
 
 class ParticipantTests(unittest.TestCase):
+    def test_stale_source_engine_is_reported_before_ownership_or_prepare(self):
+        interface=Interface()
+        participant=Participant(factory=lambda:interface,output_finder=lambda:'Virtual-4')
+        participant.interface=interface;participant.factory=None
+        with patch('monitorize.desktop.remote_login_runtime.source_engine_update_error',
+                   return_value='Update remote-login service assets with stage-remote-login.py'):
+            status=participant.poll()
+        self.assertEqual(status['state'],'error')
+        self.assertIn('stage-remote-login.py',status['startup_error'])
+        self.assertEqual(interface.calls,[])
+
     def test_physical_greeter_handoff_uses_root_reservation_without_connected_virtual_output(self):
         interface=Interface();original=interface.GetStatus
         interface.GetStatus=lambda **kwargs:json.dumps({**json.loads(original()),'output_name':'Virtual-0'})

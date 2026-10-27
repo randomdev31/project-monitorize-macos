@@ -20,6 +20,19 @@ cd /path/to/Monitorize
 python3 scripts/stage-remote-login.py
 ```
 
+After a source rebuild, an enabled remote-login installation must use the same
+engine as the desktop. The source installer checks the actual binary contents;
+if they differ, it stages the new desktop engine and prints repair commands,
+then exits with status 1 instead of claiming a complete installation. Follow
+those commands and restart the services or reboot. Keep the existing enrollment
+and pairing. Changing `--cuda=off` to `--cuda=on` requires this system update too.
+The desktop also reports a mismatch before handing off to the stale engine.
+
+Native packages use the same installed engine for desktop and boot hosting and
+update it through the package manager. NVIDIA encoding requires a CUDA-enabled
+package; a build explicitly made without CUDA cannot provide NVENC. Encoder
+startup errors now identify NVIDIA failure and its source/package repair options.
+
 The engine/assets paths default to this checkout, and a new temporary stage is
 chosen automatically. The script prints absolute administrator install commands
 that work from any directory. Run those commands, reopen Monitorize, and enable

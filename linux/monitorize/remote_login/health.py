@@ -6,6 +6,22 @@ import stat
 import time
 
 
+def startup_failure(log,status):
+    """Summarize fixed failure markers from this attempt, never arbitrary log text."""
+    try:
+        with Path(log).open('rb') as source:
+            source.seek(0,os.SEEK_END)
+            source.seek(max(0,source.tell()-32768))
+            text=source.read(32768)
+        if b'MONITORIZE_STRICT_SELECTION_FAILED: requested encoder [nvenc] is unavailable' in text:
+            return ('NVIDIA NVENC is unavailable in the installed remote-login engine. '
+                    'Source installs: rebuild with --cuda=on and redeploy remote-login service assets. '
+                    'Native installs: install the CUDA-enabled Monitorize package. '
+                    'Also check the NVIDIA driver and GPU access. See desktop-console.log.')
+    except OSError:pass
+    return f'Sunshine exited (status {status}). See desktop-console.log.'
+
+
 def inspect_startup(log,offset,output):
     try:
         with Path(log).open('rb') as source:

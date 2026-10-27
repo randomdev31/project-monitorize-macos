@@ -6,6 +6,22 @@ from monitorize.remote_login.health import inspect_startup,write_health,read_hea
 
 
 class HealthTests(unittest.TestCase):
+    def test_nvenc_exit_explains_source_and_package_repair_without_exposing_log(self):
+        from monitorize.remote_login.health import startup_failure
+        with tempfile.TemporaryDirectory() as d:
+            log=Path(d)/'desktop-console.log'
+            log.write_text('untrusted private text\nFatal: MONITORIZE_STRICT_SELECTION_FAILED: requested encoder [nvenc] is unavailable\n')
+            error=startup_failure(log,1)
+            self.assertIn('NVIDIA',error)
+            self.assertIn('CUDA',error)
+            self.assertIn('remote-login',error)
+            self.assertIn('package',error)
+            self.assertNotIn('untrusted private text',error)
+            log.write_text('unrelated startup error')
+            self.assertIn('status 7',startup_failure(log,7))
+            log.unlink()
+            self.assertIn('status 9',startup_failure(log,9))
+
     def test_no_stale_startup_or_wrong_output_readiness(self):
         with tempfile.TemporaryDirectory() as d:
             log=Path(d)/'engine.log'

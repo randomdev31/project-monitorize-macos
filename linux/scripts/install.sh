@@ -1110,6 +1110,13 @@ if [[ ! -e /dev/uinput || ! -r /dev/uinput || ! -w /dev/uinput ]]; then
     echo "Touch/input needs the monitorize-input setup from the wiki and a new login session." >&2
 fi
 
+# An enrolled source install has a second, root-owned engine. A desktop rebuild
+# cannot update it; stage the exact new engine before claiming complete success.
+if [[ "${INSTALL_MODE}" == "complete" ]]; then
+    "${VENV_DIR}/bin/python3" "${REPOSITORY_DIR}/scripts/check-source-remote-login.py" \
+        --sunshine "${SUNSHINE_VENV_BIN}" --assets "${SUNSHINE_VENV_ASSETS}"
+fi
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 if [[ "${INSTALL_MODE}" == "complete" ]]; then

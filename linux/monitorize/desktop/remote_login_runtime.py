@@ -8,6 +8,7 @@ from PyQt6.QtCore import QObject,QTimer,pyqtSignal
 from monitorize.platform.login_capture_probe import find_boot_output
 from monitorize.remote_login.settings import SETTINGS,read_settings
 from monitorize.remote_login.dbus_service import NAME,PATH,INTERFACE
+from monitorize.remote_login.capability import source_engine_update_error
 
 MESSAGES={
     'greeter_idle':'Login host is listening; the virtual display is disconnected until a client connects.',
@@ -150,6 +151,9 @@ class Participant:
                 return dict(status,state='stopped')
             if status.get('state')=='stopped':self.want_running=False
             if self.want_running:
+                if self.factory is None and status.get('state') in ('waiting_for_desktop','handoff_to_desktop'):
+                    error=source_engine_update_error()
+                    if error:return dict(status,state='error',startup_error=error,listening=False,capture_ready=False)
                 if status.get('state') not in ('waiting_for_desktop','handoff_to_desktop','desktop_starting','desktop_available'):
                     return status
                 if not self.generation:

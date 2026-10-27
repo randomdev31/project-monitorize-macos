@@ -13,7 +13,7 @@ from .boot_host import BootHost
 from .daemon import require_installed
 from .descriptors import read_descriptor
 from .engine import EngineOwner,RetrySchedule
-from .health import inspect_startup,write_health,rotate_startup_log,ListenerEvidence
+from .health import inspect_startup,write_health,rotate_startup_log,ListenerEvidence,startup_failure
 from .settings import read_settings,validate_descriptor
 
 ENGINE=Path('/usr/libexec/monitorize/sunshine')
@@ -226,7 +226,7 @@ def desktop_main():
                 exited=owner.reap()
                 if exited is not None:
                     display.reset_engine();retry.failed(time.monotonic())
-                    startup_error=f'Sunshine exited (status {exited}). See desktop-console.log.'
+                    startup_error=startup_failure(settings.directory/'logs/desktop-console.log',exited)
                     print(startup_error,flush=True)
                 if display.due():
                     try:display.expire()

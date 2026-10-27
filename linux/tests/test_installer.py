@@ -385,6 +385,10 @@ check_sunshine_node_modules_permissions
             self.write_executable(
                 fake_bin / "python3",
                 '''#!/usr/bin/env bash
+if [[ "${1:-}" == *"/check-source-remote-login.py" && "${MONITORIZE_TEST_REMOTE_UPDATE:-}" == "required" ]]; then
+    printf 'Desktop updated; remote-login system assets still need updating.\\n'
+    exit 1
+fi
 if [[ "${1:-}" == "-c" ]]; then
     [[ "${2:-}" == *"sys.version_info"* ]] && printf '3.12.0\\n'
     exit 0
@@ -462,6 +466,14 @@ exit 0
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Bundled Sunshine installed", result.stdout)
             self.assertIn("Complete Install", result.stdout)
+            pending = subprocess.run(
+                [script, "--complete", "--cuda=off"], cwd=script.parent,
+                env=dict(env, MONITORIZE_TEST_REMOTE_UPDATE="required"),
+                stdin=subprocess.DEVNULL, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(pending.returncode, 1, pending.stderr)
+            self.assertIn("remote-login system assets still need updating", pending.stdout)
+            self.assertNotIn("Monitorize has been installed!", pending.stdout)
             cmake_log = (fixture / "cmake.log").read_text()
             self.assertIn("-DSUNSHINE_ENABLE_CUDA=OFF", cmake_log)
             self.assertIn("-DCUDA_FAIL_ON_MISSING=OFF", cmake_log)
