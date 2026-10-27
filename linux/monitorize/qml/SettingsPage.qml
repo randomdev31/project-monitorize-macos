@@ -207,9 +207,18 @@ Item {
                 }
 
                 Text {
-                    visible: page.bootOptionsExpanded && (!page.bootStatus.available || (!page.bootStatus.supported && !page.bootStatus.enabled))
-                    text: page.bootStatus.message || ""
+                    objectName: "bootStartupStatusMessage"
+                    visible: page.bootOptionsExpanded && (!page.bootStatus.available || (!page.bootStatus.enabled && (!autostartCheck.checked || !page.bootStatus.supported || page.bootStatus.live_available !== true)))
+                    text: !page.bootStatus.available || (!page.bootStatus.supported && !page.bootStatus.enabled)
+                          ? (page.bootStatus.message || "") : (!autostartCheck.checked ? "Enable Start Monitorize after login first." : (page.bootStatus.live_message || "Install matching live-enrollment service updates before enabling boot startup."))
                     color: theme.textSecondary; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
+                CustomButton {
+                    objectName: "refreshBootStartupStatus"
+                    text: "Refresh startup status"
+                    visible: page.bootOptionsExpanded
+                    enabled: !backend.remoteLoginSetupBusy
+                    onClicked: page.refreshStartup()
                 }
                 Text {
                     text: page.settingsError; visible: text.length > 0

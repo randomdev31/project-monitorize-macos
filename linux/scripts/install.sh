@@ -1119,6 +1119,12 @@ if [[ "${INSTALL_MODE}" == "complete" ]]; then
     echo "  Sunshine streaming backend and KDE virtual-display"
     echo "  support are installed and ready."
     echo "  Sunshine CUDA: ${SUNSHINE_CUDA_ENABLED} (policy: ${CUDA_POLICY})."
+    echo ""
+    echo "  Login-screen startup requires separate system service assets."
+    echo "  To prepare or update them, fully quit Monitorize and run:"
+    printf '    python3 %q\n' "${REPOSITORY_DIR}/scripts/stage-remote-login.py"
+    echo "  Follow its printed administrator install commands, then enable"
+    echo "  Also start at boot in Settings. Staging alone does not install it."
 else
     echo "  ${APP_NAME} has been installed!  (Partial Install)"
     echo "  It should now appear in your application menu."

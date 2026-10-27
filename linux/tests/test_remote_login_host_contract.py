@@ -24,12 +24,15 @@ with TemporaryDirectory() as directory,patch.object(lease,'OWNER_UID',os.getuid(
     drm=root/'card2-Virtual-2';drm.mkdir();(drm/'enabled').write_text('enabled')
     output=dict(name='Virtual-2',card='card2',connector_id=41,display='mon1',status='connected',
                 edid_sha256=reserved['edid_sha256'],path=str(drm))
+    activation_budget=[0]
     def worker(uid,environment,payload,timeout):
         assert uid==42
         assert payload['name']=='Virtual-2' and payload['connector_id']==41
-        assert payload['mode']==[1920,1080,60] and timeout<=10
+        assert payload['mode']==[1920,1080,60]
+        assert 0<timeout<=10 and timeout<activation_budget[0]
         return dict(success=True,details=dict(width=1920,height=1080,refresh_rate=60))
     def activate(output,remaining):
+        activation_budget[0]=remaining
         return activate_greeter(SimpleNamespace(manager='sddm.service'),dict(greeter_uid=42,session='g1'),
             'g1',dict(XDG_SESSION_TYPE='wayland'),output,remaining,
             SimpleNamespace(_run_worker=worker),lambda:None)

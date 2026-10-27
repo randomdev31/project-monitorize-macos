@@ -23,6 +23,10 @@ test -x /usr/bin/monitorize
 test -x /usr/bin/monitorize-kde-virtual-output
 test -x /usr/libexec/monitorize/sunshine
 test -x /usr/libexec/monitorize/monitorize-system-setup
+test -f /usr/libexec/monitorize/remote-login/entry.py
+test -f /usr/lib/systemd/system/monitorize-remote-login.service
+test -f /usr/lib/systemd/system/monitorize-vkms-boot-display.service
+test -f /usr/share/dbus-1/system.d/io.github.vinnavannewton.MonitorizeRemoteLogin1.conf
 test -d /usr/share/monitorize/sunshine/assets/web
 test -f /usr/lib/firewalld/services/monitorize.xml
 test -f /etc/ufw/applications.d/monitorize
@@ -53,6 +57,16 @@ from PyQt6.QtQuickWidgets import QQuickWidget
 from monitorize.desktop import main_window
 from monitorize.platform.sunshine_service import get_sunshine_assets_dir, get_sunshine_candidates
 from monitorize.platform.utils import QML_DIR
+from monitorize.platform import remote_login_host
+from pathlib import Path
+
+# The GUI and privileged helper must ship the same compatibility check.
+checker = Path('/usr/lib/monitorize-remote-login/monitorize/platform/remote_login_host.py')
+assert checker.read_bytes() == Path(remote_login_host.__file__).read_bytes()
+for version in ('0.3', '0.3.0', '1.0', '1.0.0'):
+    assert remote_login_host.compatible_host_version(version), version
+for version in ('0.2.9', '1.0bad'):
+    assert not remote_login_host.compatible_host_version(version), version
 
 command = get_sunshine_candidates()[0]
 assert command[0] == '/usr/libexec/monitorize/sunshine'

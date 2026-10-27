@@ -6,12 +6,14 @@ import json
 import mmap
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import stat
 import subprocess
 
 BACKUPS=Path('var/lib/monitorize/remote-login-deployments')
+ROOT=Path(__file__).resolve().parents[1]
 ENGINE='usr/libexec/monitorize/sunshine'
 FILES={ENGINE,'usr/libexec/monitorize/monitorize-system-setup',
        'usr/lib/firewalld/services/monitorize.xml','etc/ufw/applications.d/monitorize',
@@ -65,10 +67,37 @@ def allowed(relative):
         and path.suffix=='.py')
 
 
-def validate_bundle(stage):
+def validate_source_matches(stage,repository=ROOT):
+    """Read source as data only; never execute code from the staged tree as root."""
+    stage=Path(stage);repository=Path(repository)
+    modules=[*(repository/'linux/monitorize/remote_login').glob('*.py'),
+             *(repository/'linux/monitorize/platform'/name for name in
+               ('remote_login_host.py','remote_login_identity.py','login_capture_probe.py'))]
+    for source in modules:
+        relative=Path('usr/lib/monitorize-remote-login')/source.relative_to(repository/'linux')
+        staged=stage/relative
+        if not staged.is_file() or staged.is_symlink() or staged.read_bytes()!=source.read_bytes():
+            raise ValueError('Staged service code is missing or differs from this checkout: '+str(relative)+
+                             '. Prepare a fresh bundle with '+str(repository/'scripts/stage-remote-login.py')+' and install that new stage.')
+    setup=stage/'usr/libexec/monitorize/monitorize-system-setup'
+    if not setup.is_file() or setup.is_symlink() or setup.read_bytes()!=(repository/'packaging/common/monitorize-system-setup').read_bytes():
+        raise ValueError('Staged setup helper differs from this checkout. Prepare and install a fresh bundle.')
+
+
+def constant(source,name):
+    try:
+        values=[ast.literal_eval(node.value) for node in ast.parse(source).body
+                if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id==name for t in node.targets)]
+    except (ValueError,TypeError,SyntaxError) as error:
+        raise ValueError('Invalid VKMS protocol declaration; reinstall the complete host support.') from error
+    return values[0] if len(values)==1 and type(values[0]) is int else 0
+
+
+def validate_bundle(stage,*,host_root=Path('/')):
     """Fail before changing the host if the prepared bundle is incomplete."""
     stage=Path(stage)
     required=(FILES-HOST_FILES)|{'usr/lib/monitorize-remote-login/monitorize/remote_login/daemon.py',
+                   'usr/lib/monitorize-remote-login/monitorize/platform/remote_login_host.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/enrollment.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/live_setup.py',
                    'usr/lib/monitorize-remote-login/monitorize/remote_login/greeter_display.py',
@@ -100,28 +129,32 @@ def validate_bundle(stage):
             if any(binary.find(marker)<0 for marker in (b'MONITORIZE_CONTROL_PROTOCOL=1',b'MONITORIZE_STRICT_KMS_OUTPUT_MISSING')):
                 raise ValueError('Staged Sunshine lacks exact KMS output support.')
     staged=stage/'usr/lib/monitorize-vkms/monitorize_vkms'
-    host=staged if staged.exists() else Path('/usr/lib/monitorize-vkms/monitorize_vkms')
-    if not (host/'boot_display.py').is_file() or 'BOOT_DISPLAY_PROTOCOL = 1' not in (host/'helper.py').read_text():
+    host_root=stage if staged.exists() else Path(host_root)
+    host=host_root/'usr/lib/monitorize-vkms/monitorize_vkms'
+    if not (host/'boot_display.py').is_file() or not (host/'helper.py').is_file() or constant((host/'helper.py').read_text(),'BOOT_DISPLAY_PROTOCOL')!=1:
         raise ValueError('Stage or install the VKMS host Python update with boot-display protocol v1.')
-    if 'GREETER_ON_DEMAND_PROTOCOL = 1' not in (host/'boot_display.py').read_text():
+    if constant((host/'boot_display.py').read_text(),'GREETER_ON_DEMAND_PROTOCOL')!=1:
         raise ValueError('Stage or install the VKMS host Python update with on-demand greeter protocol v1.')
-    if 'IDLE_DISPLAY_PROTOCOL = 1' not in (host/'boot_display.py').read_text():
+    if constant((host/'boot_display.py').read_text(),'IDLE_DISPLAY_PROTOCOL')!=1:
         raise ValueError('Stage or install the VKMS host Python update with idle-display protocol v1.')
     if staged.exists():
         for relative in HOST_FILES:
             if not (stage/relative).is_file():raise ValueError('Stage the matching host helpers, VERSION and capabilities manifest together.')
-        package=stage/'usr/lib/monitorize-vkms/monitorize_vkms/helper.py'
-        executable=stage/'usr/libexec/monitorize-vkms/monitorize-vkms-helper'
-        if package.read_bytes()!=executable.read_bytes():raise ValueError('Staged host helper copies do not match.')
-        version=(stage/'usr/lib/monitorize-vkms/VERSION').read_text().strip()
-        manifest=json.loads((stage/'usr/share/monitorize-vkms/capabilities.json').read_text())
-        protocols=dict(boot_display=1,greeter_on_demand=1,idle_display=1)
-        declarations=[ast.literal_eval(node.value) for node in ast.parse((host/'boot_display.py').read_text()).body
-                      if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='LIVE_ENROLLMENT_PROTOCOL' for t in node.targets)]
-        if declarations == [1] and type(declarations[0]) is int:
-            protocols['live_enrollment']=1
-        if manifest!=dict(schema_version=1,version=version,remote_login_protocols=protocols):
-            raise ValueError('Staged host capabilities manifest does not match its protocols.')
+    package=host/'helper.py'
+    executable=host_root/'usr/libexec/monitorize-vkms/monitorize-vkms-helper'
+    if package.read_bytes()!=executable.read_bytes():raise ValueError('VKMS host helper copies do not match. Reinstall the complete host support.')
+    version=(host_root/'usr/lib/monitorize-vkms/VERSION').read_text().strip()
+    manifest=json.loads((host_root/'usr/share/monitorize-vkms/capabilities.json').read_text())
+    if not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?',version) or tuple(map(int,version.split('.')))<(0,3):
+        raise ValueError('VKMS host version '+repr(version)+' is unsupported; version 0.3.0 or newer is required.')
+    protocols=manifest.get('remote_login_protocols') if isinstance(manifest,dict) else None
+    if (not isinstance(manifest,dict) or type(manifest.get('schema_version')) is not int or manifest['schema_version']!=1
+        or manifest.get('version')!=version or not isinstance(protocols,dict)
+        or any(type(protocols.get(k)) is not int or protocols[k]!=1 for k in ('boot_display','greeter_on_demand','idle_display'))):
+        raise ValueError('VKMS host capabilities manifest does not match its version/protocols. Reinstall the complete host support.')
+    if 'live_enrollment' in protocols and (type(protocols['live_enrollment']) is not int or protocols['live_enrollment']!=1
+        or constant((host/'boot_display.py').read_text(),'LIVE_ENROLLMENT_PROTOCOL')!=1):
+        raise ValueError('VKMS host capabilities manifest does not match its live-enrollment implementation.')
 
 
 class Commands:
@@ -281,15 +314,17 @@ def main():
     if args.host_only and not args.stage:parser.error('--host-only requires --stage')
     if os.geteuid()!=0:parser.exit(1,'Run this explicit asset installation with sudo.\n')
     try:
+        if args.stage and not args.host_only:
+            validate_source_matches(args.stage)
         # Do not replace executable/code while an engine or supervisor is alive.
         for process in Path('/proc').glob('[0-9]*'):
             try:
                 if (process/'comm').read_text().strip()=='sunshine':
-                    raise RuntimeError('Stop Sunshine and the login-capture experiment before installing assets.')
+                    raise RuntimeError('Sunshine is still running (PID '+process.name+'). Stop streaming and fully quit Monitorize from its tray menu, then retry this installer. Closing the window can leave it running in the tray.')
             except (FileNotFoundError,ProcessLookupError):pass
         for unit in ('monitorize-remote-login.service','monitorize-vkms.service'):
             result=subprocess.run(['/usr/bin/systemctl','is-active','--quiet',unit],timeout=5,check=False)
-            if result.returncode==0:raise RuntimeError('Stop '+unit+' before replacing its code.')
+            if result.returncode==0:raise RuntimeError('Stop '+unit+' before replacing its code: sudo systemctl stop '+unit+'. Fully quit Monitorize first so it does not reactivate the service.')
         installer=Installer()
         if args.stage:
             if not any((Path(directory)/'monitorize-vkms-bootstrap.service').is_file() for directory in

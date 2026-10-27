@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -24,6 +25,21 @@ class DeploymentTests(unittest.TestCase):
         self.installer=self.module.Installer(self.root,owner_uid=os.getuid(),commands=self.commands)
     def file(self,relative,data):
         path=self.stage/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data);return path
+    def complete_bundle(self):
+        spec=importlib.util.spec_from_file_location('assets',ROOT/'packaging/remote-login/install-assets.py')
+        assets=importlib.util.module_from_spec(spec);spec.loader.exec_module(assets);assets.stage(self.stage)
+        for relative in self.module.FILES:
+            if not (self.stage/relative).exists():self.file(relative,b'')
+        self.file('usr/libexec/monitorize/monitorize-system-setup',(ROOT/'packaging/common/monitorize-system-setup').read_bytes())
+        self.file(self.module.ENGINE,b'\x7fELF MONITORIZE_CONTROL_PROTOCOL=1 MONITORIZE_STRICT_KMS_OUTPUT_MISSING')
+        self.file('usr/share/monitorize/sunshine/assets/web/index.html',b'web')
+        for relative in ('usr/lib/monitorize-vkms/monitorize_vkms/helper.py','usr/libexec/monitorize-vkms/monitorize-vkms-helper'):
+            self.file(relative,b'BOOT_DISPLAY_PROTOCOL = 1')
+        self.file('usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py',b'GREETER_ON_DEMAND_PROTOCOL = 1\nIDLE_DISPLAY_PROTOCOL = 1\nLIVE_ENROLLMENT_PROTOCOL = 1')
+        self.file('usr/lib/monitorize-vkms/VERSION',b'1.0\n')
+        self.manifest=dict(schema_version=1,version='1.0',remote_login_protocols=dict(
+            boot_display=1,greeter_on_demand=1,idle_display=1,live_enrollment=1))
+        self.file('usr/share/monitorize-vkms/capabilities.json',json.dumps(self.manifest).encode())
     def test_install_and_rollback_restore_original_files_and_remove_only_new_files(self):
         relative='usr/lib/monitorize-remote-login/monitorize/remote_login/service.py'
         target=self.root/relative;target.parent.mkdir(parents=True);target.write_bytes(b'old');target.chmod(0o600)
@@ -71,16 +87,51 @@ class DeploymentTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.installer.install(self.stage)
 
     def test_complete_bundle_requires_primary_capture_module(self):
-        for relative in self.module.FILES:self.file(relative,b'')
-        self.file(self.module.ENGINE,b'\x7fELF MONITORIZE_CONTROL_PROTOCOL=1 MONITORIZE_STRICT_KMS_OUTPUT_MISSING')
-        self.file('usr/share/monitorize/sunshine/assets/web/index.html',b'web')
-        for source in (ROOT/'linux/monitorize/remote_login').glob('*.py'):
-            if source.name!='login_primary.py':
-                self.file('usr/lib/monitorize-remote-login/monitorize/remote_login/'+source.name,source.read_bytes())
-        self.file('usr/lib/monitorize-vkms/monitorize_vkms/helper.py',b'BOOT_DISPLAY_PROTOCOL = 1')
-        self.file('usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py',b'GREETER_ON_DEMAND_PROTOCOL = 1\nIDLE_DISPLAY_PROTOCOL = 1')
+        self.complete_bundle()
+        (self.stage/'usr/lib/monitorize-remote-login/monitorize/remote_login/login_primary.py').unlink()
         with self.assertRaisesRegex(ValueError,'login_primary.py'):
             self.module.validate_bundle(self.stage)
+
+    def test_current_bundle_accepts_two_part_version_and_additional_host_protocols(self):
+        self.complete_bundle()
+        self.module.validate_bundle(self.stage)
+        self.module.validate_source_matches(self.stage)
+
+    def test_old_stage_is_rejected_before_installation(self):
+        self.complete_bundle()
+        self.file('usr/lib/monitorize-remote-login/monitorize/platform/remote_login_host.py',b'# old checker')
+        with self.assertRaisesRegex(ValueError,'Prepare a fresh bundle'):
+            self.module.validate_source_matches(self.stage)
+        self.assertEqual(list(self.root.iterdir()),[])
+
+    def test_manifest_versions_and_protocol_types_are_validated(self):
+        self.complete_bundle()
+        self.manifest['remote_login_protocols']['idle_display']=True
+        self.file('usr/share/monitorize-vkms/capabilities.json',json.dumps(self.manifest).encode())
+        with self.assertRaisesRegex(ValueError,'manifest'):
+            self.module.validate_bundle(self.stage)
+        self.file('usr/lib/monitorize-vkms/VERSION',b'0.2.9\n')
+        with self.assertRaisesRegex(ValueError,'version'):
+            self.module.validate_bundle(self.stage)
+
+    def test_comment_does_not_advertise_a_missing_protocol(self):
+        self.complete_bundle()
+        self.file('usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py',b'GREETER_ON_DEMAND_PROTOCOL = 1\n# IDLE_DISPLAY_PROTOCOL = 1')
+        with self.assertRaisesRegex(ValueError,'idle-display'):
+            self.module.validate_bundle(self.stage)
+
+    def test_existing_host_metadata_is_checked_even_without_bundled_host_code(self):
+        self.complete_bundle()
+        target=self.root/'usr/lib/monitorize-vkms';target.parent.mkdir(parents=True)
+        (self.stage/'usr/lib/monitorize-vkms').rename(target)
+        for relative in self.module.HOST_FILES:
+            source=self.stage/relative
+            if source.exists():
+                target=self.root/relative;target.parent.mkdir(parents=True,exist_ok=True);source.rename(target)
+        self.module.validate_bundle(self.stage,host_root=self.root)
+        (self.root/'usr/lib/monitorize-vkms/VERSION').write_text('0.2.9\n')
+        with self.assertRaisesRegex(ValueError,"version '0.2.9'"):
+            self.module.validate_bundle(self.stage,host_root=self.root)
     def test_package_owned_host_files_are_rejected_before_destination_mutation(self):
         from unittest.mock import patch
         self.file('usr/lib/monitorize-vkms/monitorize_vkms/helper.py',b'host')

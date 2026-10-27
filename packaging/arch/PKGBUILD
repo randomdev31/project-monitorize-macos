@@ -124,6 +124,9 @@ build() {
 
 check() {
     cd "${srcdir}/monitorize-${pkgver}"
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=linux python -m unittest \
+        linux.tests.test_remote_login_host linux.tests.test_remote_login_delivery \
+        linux.tests.test_remote_login_deployment
     desktop-file-validate packaging/fedora/monitorize.desktop
     desktop-file-validate packaging/fedora/monitorize-kde-virtual-output.desktop
     test -x monitorize-kde-virtual-output

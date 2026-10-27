@@ -9,6 +9,13 @@ import stat
 REQUIRED_PROTOCOLS = dict(boot_display=1, greeter_on_demand=1, idle_display=1)
 
 
+def compatible_host_version(version):
+    """The companion project publishes both major.minor and major.minor.patch."""
+    return (isinstance(version,str)
+            and re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?',version) is not None
+            and tuple(map(int,version.split('.'))) >= (0,3))
+
+
 def _read(path, root, owner_uid, maximum=262144):
     for item in (path.parent, *path.parent.parents):
         if not item.is_relative_to(root):
@@ -62,18 +69,26 @@ def host_readiness(root=Path('/'), *, owner_uid=0, require_live=False) -> dict:
     except (OSError,ValueError):
         return result('host_incomplete','The VKMS host installation is incomplete or mixed. Reinstall or upgrade monitorize-vkms as one complete installation.')
     try:
-        protocols=manifest['remote_login_protocols']
+        if not isinstance(manifest,dict):raise ValueError('Invalid capabilities manifest.')
+        if type(manifest.get('schema_version')) is not int or manifest['schema_version']!=1:
+            raise ValueError('Unsupported VKMS capabilities manifest schema.')
+        if manifest.get('version')!=version:
+            raise ValueError('VKMS VERSION and capabilities manifest disagree. Reinstall monitorize-vkms as one complete installation.')
+        if not compatible_host_version(version):
+            raise ValueError('Installed monitorize-vkms version '+repr(version)+' is unsupported; version 0.3.0 or newer is required.')
+        protocols=manifest.get('remote_login_protocols')
+        if not isinstance(protocols,dict):raise ValueError('VKMS capabilities manifest is missing remote-login protocols.')
         declared=dict(boot_display=_constant(helper,'BOOT_DISPLAY_PROTOCOL'),
                       greeter_on_demand=_constant(boot,'GREETER_ON_DEMAND_PROTOCOL'),
                       idle_display=_constant(boot,'IDLE_DISPLAY_PROTOCOL'))
-        if (type(manifest.get('schema_version')) is not int or manifest['schema_version']!=1
-            or manifest.get('version')!=version or not re.fullmatch(r'[0-9]+\.[0-9]+(?:\.[0-9]+)?',version)
-            or (tuple(map(int,version.split('.')))+(0,))[:3]<(0,3,0) or not isinstance(protocols,dict)
-            or any(type(protocols.get(k)) is not int or protocols[k]!=v or declared[k]!=v for k,v in REQUIRED_PROTOCOLS.items())):
-            raise ValueError()
-    except (ValueError,TypeError,KeyError,SyntaxError):
+        missing=[k for k,v in REQUIRED_PROTOCOLS.items()
+                 if type(protocols.get(k)) is not int or protocols[k]!=v or declared[k]!=v]
+        if missing:
+            raise ValueError('Installed monitorize-vkms lacks protocol v1 for: '+', '.join(missing)+'. Upgrade the host package or source installation.')
+    except (ValueError,TypeError,KeyError,SyntaxError) as error:
         protocols={}
-        return result('host_incompatible','Upgrade monitorize-vkms to a compatible release with boot-display, on-demand greeter, and idle-display protocol v1.')
+        message=str(error) if isinstance(error,ValueError) else 'Invalid VKMS protocol metadata. Reinstall monitorize-vkms as one complete installation.'
+        return result('host_incompatible',message)
     from monitorize.remote_login.capability import exact_kms_engine
     engine=root/'usr/libexec/monitorize/sunshine'
     try:

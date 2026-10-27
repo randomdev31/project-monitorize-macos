@@ -3,6 +3,7 @@ import subprocess
 import runpy
 import unittest
 import xml.etree.ElementTree as ElementTree
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +14,37 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class SystemSetupTest(unittest.TestCase):
+    def remote_status(self,host,*,matching=True,source=True,manager_current=True):
+        capability=dict(supported=True,manager='gdm.service',compositor='gnome',validated=False,message='Supported')
+        with tempfile.TemporaryDirectory() as directory, \
+             patch('monitorize.remote_login.settings.SETTINGS',Path(directory)/'absent'), \
+             patch('monitorize.remote_login.display_managers.manager_capabilities',return_value=capability), \
+             patch('monitorize.platform.remote_login_host.host_readiness',return_value=host), \
+             patch.object(Path,'read_bytes',autospec=True,side_effect=lambda path: b'old' if not matching and str(path).startswith('/usr/lib/monitorize-remote-login/') else b'current'), \
+             patch.object(Path,'read_text',return_value='GDM_WAYLAND_PROTOCOL = 1' if manager_current else ''), \
+             patch.object(system_setup,'__file__',str(ROOT/'linux/monitorize/platform/system_setup.py') if source else '/usr/lib/python3/site-packages/monitorize/platform/system_setup.py'):
+            return system_setup.remote_login_setup_status()
+
+    def test_host_failure_is_not_hidden_by_a_missing_display_manager_module(self):
+        host=dict(available=False,reason='host_incompatible',protocols={},message='VERSION and manifest disagree')
+        result=self.remote_status(host,manager_current=False)
+        self.assertEqual(result['message'],host['message'])
+        self.assertFalse(result['available'])
+
+    def test_source_and_native_missing_assets_have_matching_repair_instructions(self):
+        host=dict(available=False,reason='missing_assets',protocols={},message='Missing')
+        self.assertIn(str(ROOT/'scripts/stage-remote-login.py'),self.remote_status(host)['message'])
+        self.assertIn('native package',self.remote_status(host,source=False)['message'])
+
+    def test_app_and_privileged_checker_mismatch_is_caught_before_authorization(self):
+        host=dict(available=True,reason='ready',protocols={},message='Ready')
+        self.assertTrue(self.remote_status(host)['available'])
+        result=self.remote_status(host,matching=False)
+        self.assertFalse(result['available'])
+        self.assertEqual(result['reason'],'service_update_required')
+        self.assertIn('different compatibility checks',result['message'])
+        self.assertIn('stage-remote-login.py',result['message'])
+
     def test_new_firewall_profile_is_reloaded_before_adding_service(self):
         from unittest.mock import Mock
         namespace=runpy.run_path(str(ROOT/'packaging/common/monitorize-system-setup'))

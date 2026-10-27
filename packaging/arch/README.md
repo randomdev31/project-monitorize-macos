@@ -62,3 +62,16 @@ If upgrading from stock VKMS left an output active, disable it using your
 desktop display settings; the new cleanup action does not manage stock outputs.
 
 The app uses the host VKMS D-Bus service for up to two independently configured displays. Upgrade the host package and reboot after an older single-display installation.
+
+For **Also start at boot (login screen)**, this package includes the system service
+bundle and privileged setup helper. Install compatible monitorize-vkms host support,
+select **Start Monitorize after login**, then enable the boot option and authorize
+setup. If the checkbox is disabled, expand its options to see the exact prerequisite
+and use **Refresh startup status** after repairing it. Missing Monitorize assets
+require a package reinstall/upgrade; source staging scripts are not needed.
+See [remote-login setup](../remote-login/README.md#current-installation-workflow).
+
+Package checks run the host compatibility and source deployment regression tests,
+including the private helper's copy of the compatibility checker. The fresh-install
+smoke test also verifies that both packaged checkers match and accept VKMS `1.0`
+as well as `1.0.0`. These checks do not replace a live login-screen streaming test.

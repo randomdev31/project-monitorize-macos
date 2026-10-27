@@ -58,6 +58,9 @@ login-screen display policy.
 - [openSUSE Tumbleweed](https://github.com/vinnavannewton/project-monitorize/wiki/openSUSE-Tumbleweed-installation)
 - [NixOS / Nix](https://github.com/vinnavannewton/project-monitorize/wiki/Nix-installation)
 
+For login-screen startup, see [remote-login setup](packaging/remote-login/README.md#current-installation-workflow),
+including the extra system-assets step for source installs.
+
 ## Contributing
 
 Want to contribute? See the [Contributing guide](https://github.com/vinnavannewton/project-monitorize/wiki/Contributing).

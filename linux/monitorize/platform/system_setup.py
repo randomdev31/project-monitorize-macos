@@ -6,6 +6,7 @@ import grp
 import json
 import os
 import pwd
+import shlex
 import shutil
 import stat
 import subprocess
@@ -87,7 +88,7 @@ def system_setup_command(enable_input: bool, enable_firewall: bool, enable_vkms=
     """Build the fixed privileged command without starting it."""
     status = get_system_setup_status()
     if not status["available"]:
-        return None, {"success": False, "message": "System setup is available only from the RPM or DEB package."}
+        return None, {"success": False, "message": "Install Monitorize system-setup assets from a native package or the source deployment installer."}
     if not enable_input and not enable_firewall and not enable_vkms:
         return None, {"success": False, "message": "Select at least one system setup action."}
 
@@ -138,17 +139,31 @@ def remote_login_setup_status():
     capability=manager_capabilities()
     from monitorize.platform.remote_login_host import host_readiness
     host=host_readiness()
+    source_stage=Path(__file__).resolve().parents[3]/'scripts/stage-remote-login.py'
+    source_install=source_stage.is_file()
+    repair=('Run '+shlex.join(['python3',str(source_stage)])+' and follow its printed installation commands, then reopen Monitorize.'
+            if source_install else 'Reinstall or upgrade the Monitorize native package, then reopen Monitorize.')
     live=host_readiness(require_live=True)
     result={'available':host['available'],'live_available':bool(live['available'] and capability['supported']),
             'live_message':live['message'],'enabled':False,'create_login_virtual_display':False,'login_display_policy_available':login_display_policy_available(),'display_idle_timeout_seconds':20,'reason':host['reason'],'protocols':host['protocols'],
             'supported':capability['supported'],'manager':capability['manager'],
             'compositor':capability['compositor'],'validated':capability['validated'],
             'message':capability['message'] if host['available'] else host['message']}
-    if capability['manager'] in ('sddm.service','gdm.service'):
+    if host['reason']=='missing_assets':
+        result['message']='Monitorize remote-login system assets are missing. '+repair
+    if host['available']:
+        from monitorize.platform import remote_login_host
+        installed_checker=Path('/usr/lib/monitorize-remote-login/monitorize/platform/remote_login_host.py')
+        try:matching=installed_checker.read_bytes()==Path(remote_login_host.__file__).read_bytes()
+        except OSError:matching=False
+        if not matching:
+            result.update(available=False,reason='service_update_required',
+                          message='The app and installed remote-login setup helper have different compatibility checks. '+repair)
+    if result['available'] and capability['manager'] in ('sddm.service','gdm.service'):
         installed=Path('/usr/lib/monitorize-remote-login/monitorize/remote_login/display_managers.py')
         try:current=('GDM_WAYLAND_PROTOCOL = 1' if capability['manager']=='gdm.service' else 'SDDM_WAYLAND_PROTOCOL = 1') in installed.read_text()
         except OSError:current=False
-        if not current:result.update(available=False,message='Install the '+('GDM' if capability['manager']=='gdm.service' else 'SDDM')+' Wayland remote-login service update before setup.')
+        if not current:result.update(available=False,reason='service_update_required',message='Install the '+('GDM' if capability['manager']=='gdm.service' else 'SDDM')+' Wayland remote-login service update before setup. '+repair)
     if SETTINGS.exists():
         try:
             settings=read_settings()
@@ -161,6 +176,8 @@ def remote_login_setup_status():
                 if getattr(settings,'manager','plasmalogin.service')!=capability['manager']:
                     result.update(supported=False,message='Display manager changed after enrollment. Revalidate remote-login setup.')
         except ValueError:result.update(available=False,message='Remote-login configuration needs administrator repair.')
+    if not result['available']:
+        result.update(live_available=False,live_message=result['message'])
     return result
 
 

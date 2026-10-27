@@ -3,11 +3,48 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from linux.tests import test_remote_login_host
 
 ROOT=Path(__file__).resolve().parents[2]
 
 
+class PackagedHostReadinessTests(test_remote_login_host.HostReadinessTests):
+    """Run the same compatibility cases against the private service bundle."""
+    def setUp(self):
+        super().setUp()
+        spec=importlib.util.spec_from_file_location('remote_assets',ROOT/'packaging/remote-login/install-assets.py')
+        assets=importlib.util.module_from_spec(spec);spec.loader.exec_module(assets)
+        self.bundle=self.root/'bundle';assets.stage(self.bundle)
+        checker=self.bundle/'usr/lib/monitorize-remote-login/monitorize/platform/remote_login_host.py'
+        self.assertEqual(checker.read_bytes(),(ROOT/'linux/monitorize/platform/remote_login_host.py').read_bytes())
+        spec=importlib.util.spec_from_file_location('private_host_checker',checker)
+        self.checker=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.checker)
+
+    def result(self):return self.checker.host_readiness(self.root,owner_uid=os.getuid())
+
+    def live(self):return self.checker.host_readiness(self.root,owner_uid=os.getuid(),require_live=True)
+
+
 class DeliveryTests(unittest.TestCase):
+    def test_staging_cli_from_another_directory_prints_absolute_install_command(self):
+        import contextlib
+        import io
+        import runpy
+        import sys
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);binary=root/'engine'
+            binary.write_bytes(b'\x7fELF\0MONITORIZE_CONTROL_PROTOCOL=1\0MONITORIZE_STRICT_KMS_OUTPUT_MISSING\0')
+            assets=root/'assets';(assets/'web').mkdir(parents=True)
+            args=[str(ROOT/'scripts/stage-remote-login.py'),'--output',str(root/'stage'),
+                  '--sunshine',str(binary),'--assets',str(assets)]
+            output=io.StringIO()
+            with contextlib.chdir(root),patch.object(sys,'argv',args),patch.object(os,'geteuid',return_value=1000),contextlib.redirect_stdout(output):
+                runpy.run_path(args[0],run_name='__main__')
+            self.assertIn(str(ROOT/'scripts/install-remote-login-assets.py'),output.getvalue())
+            self.assertIn('fully quit Monitorize',output.getvalue())
+            self.assertIn('--stage '+str(root/'stage'),output.getvalue())
+
     def test_private_service_bundle_units_and_policy_are_staged_without_enabling(self):
         path=ROOT/'packaging/remote-login/install-assets.py'
         spec=importlib.util.spec_from_file_location('remote_assets',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
@@ -75,7 +112,7 @@ class DeliveryTests(unittest.TestCase):
             host=root/'host/monitorize_vkms';host.mkdir(parents=True)
             (host/'helper.py').write_text('BOOT_DISPLAY_PROTOCOL = 1\n')
             (host/'boot_display.py').write_text('GREETER_ON_DEMAND_PROTOCOL = 1\nIDLE_DISPLAY_PROTOCOL = 1\nLIVE_ENROLLMENT_PROTOCOL = 1\n')
-            (host.parent/'VERSION').write_text('0.3.0\n')
+            (host.parent/'VERSION').write_text('1.0\n')
             with patch.object(module.os,'geteuid',return_value=1000),patch.object(module,'exact_kms_engine',return_value=True):
                 module.prepare(root/'stage',binary,assets,vkms_source=host.parent)
             self.assertTrue((root/'stage/usr/lib/monitorize-vkms/monitorize_vkms/boot_display.py').is_file())

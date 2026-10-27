@@ -93,3 +93,34 @@ class HostReadinessTests(unittest.TestCase):
         self.assertFalse(self.result()['available'])
         path.unlink();path.symlink_to(self.root/'elsewhere')
         self.assertFalse(self.result()['available'])
+
+    def test_two_and_three_part_versions_preserve_version_floor(self):
+        self.assets();self.host()
+        self.file('usr/libexec/monitorize/sunshine',b'\x7fELF\0MONITORIZE_CONTROL_PROTOCOL=1\0MONITORIZE_STRICT_KMS_OUTPUT_MISSING\0')
+        for version,expected in (('1.0','ready'),('1.0.0','ready'),('0.3','ready'),
+                                 ('0.3.0','ready'),('0.2.9','host_incompatible'),
+                                 ('1.0bad','host_incompatible'),('1','host_incompatible'),
+                                 ('1.0.0.0','host_incompatible')):
+            with self.subTest(version=version):
+                self.file('usr/lib/monitorize-vkms/VERSION',(version+'\n').encode())
+                self.manifest['version']=version;self.write_manifest()
+                self.assertEqual(self.result()['reason'],expected)
+
+    def test_messages_identify_version_metadata_and_missing_protocol_separately(self):
+        self.assets();self.host()
+        self.manifest['version']='1.0';self.write_manifest()
+        self.assertIn('disagree',self.result()['message'])
+        self.file('usr/lib/monitorize-vkms/VERSION',b'1.0\n')
+        self.manifest['remote_login_protocols']['live_enrollment']=1;self.write_manifest()
+        self.assertEqual(self.result()['reason'],'engine_incompatible')
+        self.manifest['remote_login_protocols']['idle_display']=True;self.write_manifest()
+        self.assertIn('idle_display',self.result()['message'])
+        self.assertNotIn('boot_display,',self.result()['message'])
+        self.manifest['version']='0.2.9';self.write_manifest()
+        self.file('usr/lib/monitorize-vkms/VERSION',b'0.2.9\n')
+        self.assertIn("version '0.2.9'",self.result()['message'])
+
+    def test_non_object_manifest_is_unavailable_instead_of_crashing(self):
+        self.assets();self.host()
+        self.file('usr/share/monitorize-vkms/capabilities.json',b'[]')
+        self.assertEqual(self.result()['reason'],'host_incompatible')

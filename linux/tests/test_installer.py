@@ -678,6 +678,7 @@ exit 0
         qml = (ROOT / "linux/monitorize/qml/DisplaySetupPage.qml").read_text()
         button = qml.split("id: addDisplayButton", 1)[1].split("SectionCard {", 1)[0]
         self.assertIn("enabled: !backend.applyingConfiguration", button)
+        self.assertIn('page.virtualDisplays.length < 2', button)
         self.assertNotIn("!page.vkmsSelected", button)
         self.assertIn('color: addDisplayButton.enabled ? theme.headingText : theme.textMuted', button)
         self.assertIn("addDisplayButton.enabled && addDisplayButton.hovered", button)

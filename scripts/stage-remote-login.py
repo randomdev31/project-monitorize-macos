@@ -9,13 +9,16 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import secrets
 import shutil
+import shlex
 import sys
+import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'linux'))
 from monitorize.remote_login.capability import exact_kms_engine
-from monitorize.platform.remote_login_host import REQUIRED_PROTOCOLS, _constant
+from monitorize.platform.remote_login_host import REQUIRED_PROTOCOLS, _constant, compatible_host_version
 
 
 def prepare(destination,binary,assets,*,vkms_source=None):
@@ -34,8 +37,7 @@ def prepare(destination,binary,assets,*,vkms_source=None):
         if _constant((host/'boot_display.py').read_text(),'IDLE_DISPLAY_PROTOCOL')!=1:
             raise ValueError('Select the monitorize-vkms checkout with idle-display protocol v1.')
         host_version=(host.parent/'VERSION').read_text().strip()
-        import re
-        if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',host_version) or tuple(map(int,host_version.split('.')))<(0,3,0):
+        if not compatible_host_version(host_version):
             raise ValueError('Select monitorize-vkms 0.3.0 or newer.')
     destination.mkdir(mode=0o700)
     try:
@@ -89,13 +91,24 @@ def prepare(destination,binary,assets,*,vkms_source=None):
     print('Prepared service assets:',destination)
     print('No system files, capabilities, services or display settings were changed.')
     print('Host monitorize-vkms boot-display protocol v1 must be installed before enrollment.')
+    print('Before installation: stop streaming and fully quit Monitorize from its tray menu.')
+    print('Then run (these commands work from any directory):')
+    units=['monitorize-vkms.service']
+    if any((Path(directory)/'monitorize-remote-login.service').is_file() for directory in ('/etc/systemd/system','/usr/lib/systemd/system')):
+        units.insert(0,'monitorize-remote-login.service')
+    print(shlex.join(['sudo','systemctl','stop',*units]))
+    print(shlex.join(['sudo','/usr/bin/python3','-I',str(ROOT/'scripts/install-remote-login-assets.py'),'--stage',str(destination)]))
     return destination
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output',required=True);parser.add_argument('--sunshine',required=True);parser.add_argument('--assets',required=True)
+    parser.add_argument('--output',help='New staging directory; default: a unique directory in the system temporary directory.')
+    parser.add_argument('--sunshine',default=str(ROOT/'external/sunshine/build/sunshine'))
+    parser.add_argument('--assets',default=str(ROOT/'external/sunshine/build/assets'))
     parser.add_argument('--vkms-source',help='Include host Python support only; never rebuilds/replaces the kernel module.')
     args=parser.parse_args()
-    try:prepare(args.output,args.sunshine,args.assets,vkms_source=args.vkms_source)
+    # prepare() owns creation and cleanup; a random name avoids reusing an old bundle.
+    output=args.output or str(Path(tempfile.gettempdir())/('monitorize-remote-login-'+secrets.token_hex(8)))
+    try:prepare(output,args.sunshine,args.assets,vkms_source=args.vkms_source)
     except (ValueError,OSError) as error:parser.exit(1,str(error)+'\n')

@@ -1,5 +1,54 @@
 # Remote login integration status
 
+## Current installation workflow
+
+Native Arch/RPM/DEB packages include the remote-login service assets and private
+setup helper. Install compatible `monitorize-vkms` host support separately, then
+enable **Settings → Start Monitorize after login → Also start at boot**. No source
+checkout or source deployment script is required for native packages. If app assets
+are missing or out of sync, reinstall/upgrade the Monitorize package with the package
+manager; the source installer deliberately refuses to overwrite package-owned files.
+
+The per-user source installer (`linux/scripts/install.sh`) builds the desktop app
+and streaming engine. Login-screen startup additionally needs a root-installed
+service bundle. Fully stop streaming and **Quit Monitorize from the tray menu**;
+closing its window can leave Sunshine and the VKMS D-Bus service running. From the
+repository root, prepare a new bundle:
+
+```sh
+cd /path/to/Monitorize
+python3 scripts/stage-remote-login.py
+```
+
+The engine/assets paths default to this checkout, and a new temporary stage is
+chosen automatically. The script prints absolute administrator install commands
+that work from any directory. Run those commands, reopen Monitorize, and enable
+the boot option in Settings. Staging success alone does not mean installation
+succeeded. An installer message saying Sunshine is running means nothing has
+been installed; quit the app and retry that installer command.
+
+To update source-managed host Python support in the same bundle, add
+`--vkms-source /path/to/monitorize-vkms`. The host/bootstrap and kernel module must
+already be installed. This option does not rebuild or reload the kernel module.
+
+Always prepare a **new stage after changing source code**. The source asset installer
+checks its service code against the checkout and rejects stale bundles before
+changing system files. The GUI also detects different compatibility checks in the
+app and privileged helper and gives the appropriate source/native repair action.
+Use **Refresh startup status** after repairing prerequisites. If source code itself
+changed, reopen the app to load it. A system-assets/version-check repair does not
+require reinstalling VKMS or rebooting just to retry setup; reboot only when setup
+reports it is required to apply the saved boot configuration or a kernel update.
+
+Both `1.0` and `1.0.0` are accepted host versions. The minimum version remains
+0.3.0; boot-display, on-demand greeter and idle-display protocol v1 must each be
+advertised by both the host implementation and its matching capabilities manifest.
+Additional protocol keys are allowed. Version/manifest disagreement, a missing
+protocol, and incomplete service assets are reported separately.
+
+The deployment notes below include historical experiments and temporary paths;
+use the workflow above for a fresh install or update.
+
 ## Native app upgrades and removal
 
 Arch, Fedora, openSUSE Tumbleweed, Debian Trixie and both Ubuntu targets share

@@ -187,6 +187,9 @@ with tempfile.TemporaryDirectory() as d:
             assert not primary.property('enabled')
             assert nested.property('visible')
             assert not boot.property('enabled')
+            explanation=page.findChild(QObject,'bootStartupStatusMessage')
+            assert explanation.property('visible')
+            assert 'after login first' in explanation.property('text')
             # The general timer remains visible/editable without either startup option.
             page.setProperty('bootOptionsExpanded',False);settle()
             assert page.findChild(QObject,'displayIdleTimeoutRow').property('visible')
@@ -204,6 +207,17 @@ with tempfile.TemporaryDirectory() as d:
             page.setProperty('loginAfterBootDisable',1)
             backend.remoteLoginSetupFinished.emit({'success':True});settle()
             assert login_state[0] and login.property('checked') and nested.property('visible')
+            # External asset repairs can be rechecked without navigating away.
+            status.return_value={'available':False,'enabled':False,'supported':True,'message':'Installed host VERSION and manifest disagree'}
+            e=QQmlExpression(qmlContext(page),page,'refreshStartup()');e.evaluate();settle()
+            assert not boot.property('enabled') and explanation.property('visible')
+            assert explanation.property('text')==status.return_value['message']
+            status.return_value={'available':True,'live_available':True,'enabled':False,'supported':True}
+            refresh=page.findChild(QObject,'refreshBootStartupStatus')
+            assert refresh.property('visible') and refresh.property('enabled')
+            e=QQmlExpression(qmlContext(page),refresh,'clicked()');e.evaluate();assert not e.hasError(),e.error().toString()
+            settle()
+            assert boot.property('enabled') and not explanation.property('visible')
             # Failed/cancelled authorization restores actual enrollment state.
             status.return_value={'available':True,'live_available':True,'enabled':False,'supported':True}
             backend.remoteLoginSetupFinished.emit({'success':False,'message':'Cancelled'});settle()
