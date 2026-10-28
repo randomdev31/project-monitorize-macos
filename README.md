@@ -14,10 +14,13 @@ This port adds a separate macOS frontend and native CoreGraphics backend:
 - Stop owned Sunshine processes before removing their displays. The helper also
   releases its display when the frontend's stdin pipe closes after a crash.
 
-**Status:** implementation available; native compilation, virtual display creation,
-permissions and end-to-end streaming still require verification on an Intel Mac.
-Linux tests do not establish macOS compatibility. The macOS CI workflow builds the
-helper and wheel and runs native enumeration tests; it has not been run from this workspace.
+**Status:** native x86_64 compilation, automated tests, standalone application
+packaging, bundle signature verification and packaged startup smoke checks passed
+on the macOS 15 Intel runner ([validated build](https://github.com/randomdev31/project-monitorize-macos/actions/runs/40646720228)).
+Actual virtual display creation, permissions and Moonlight streaming still need
+manual validation on a Mac. macOS 26 Tahoe testing is pending; the first target is
+an Intel 13-inch MacBook Pro. The desktop-dependent native creation test is skipped
+in CI. Linux-only test results are not treated as macOS validation.
 
 ## Requirements
 
