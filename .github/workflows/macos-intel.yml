@@ -28,7 +28,17 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python -m unittest discover -s macos/tests -v 2>&1 | tee macos-test.log
+          if python -m unittest discover -s macos/tests -v 2>&1 | tee macos-test.log; then
+            exit 0
+          else
+            python - <<'PYTHON'
+          from pathlib import Path
+          report = Path('macos-test.log').read_text()[-30000:]
+          report = report.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print(f'::error title=macOS test failure::{report}')
+          PYTHON
+            exit 1
+          fi
       - name: Record test results in public job summary
         if: always()
         shell: bash

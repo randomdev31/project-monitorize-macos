@@ -68,7 +68,7 @@ class RuntimeTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     sunshine_binary()
                 executable.chmod(0o700)
-                self.assertEqual(sunshine_binary(), str(executable))
+                self.assertEqual(sunshine_binary(), str(executable.resolve()))
         self.assertEqual(base_port(2) + 1, 49090)
 
 
