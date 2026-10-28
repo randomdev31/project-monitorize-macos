@@ -5,6 +5,7 @@ import sys
 import threading
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from monitorize.config import settings
 import unittest
 from unittest.mock import Mock, patch
@@ -68,10 +69,9 @@ class UiAsyncTest(unittest.TestCase):
             launch.assert_not_called()
 
     def test_preset_waits_for_client_holder_cleanup_and_stop_cancels_restart(self):
-        from types import SimpleNamespace
         backend = self.make_backend()
         backend.session.client_runtime = SimpleNamespace(active=False, busy=False,
-            retiring={1: object()}, stop=lambda: None)
+            retiring={1: object()}, slots={}, stop=lambda: None)
         backend._presets = [{"primary": {"display_type": "Extend"}}]
         backend.launchPreset(0)
         self.assertIsNone(backend._vkms_pending_preset)
@@ -81,7 +81,6 @@ class UiAsyncTest(unittest.TestCase):
         self.assertIsNone(backend._vkms_pending_preset)
 
     def test_switching_native_manual_session_to_listener_preset_stops_previous_host(self):
-        from types import SimpleNamespace
         from monitorize.config.settings import _normalize_preset
         backend = self.make_backend()
         backend._streaming_backend = "sunshine"
@@ -93,7 +92,7 @@ class UiAsyncTest(unittest.TestCase):
         runtime = Mock(active=False, busy=False, retiring={})
         runtime.slots = {}
         def start_slot(instance, config):
-            runtime.slots[instance] = SimpleNamespace(status="waiting", config=config)
+            runtime.slots[instance] = SimpleNamespace(status="waiting", config=config, error="")
             runtime.active = True
             return True
         runtime.start_slot.side_effect = start_slot
@@ -153,8 +152,14 @@ class UiAsyncTest(unittest.TestCase):
     def test_fallback_handoff_changes_runtime_not_boot_preferences(self):
         backend=self.make_backend();backend._remote_login.enabled=True
         backend._desktop_fallback_pending=True;backend._desktop_fallback_generation=7
-        with patch.object(backend._remote_login,'close') as close, patch.object(backend,'restartSession') as restart, patch('monitorize.config.settings.save_general_settings') as save:
+        policy=SimpleNamespace(enabled=True)
+        with patch('monitorize.remote_login.settings.read_settings',return_value=policy), \
+             patch('monitorize.platform.remote_login_identity.desktop_fallback_allowed',return_value=True) as allowed, \
+             patch.object(backend._remote_login,'close') as close, \
+             patch.object(backend,'restartSession') as restart, \
+             patch('monitorize.config.settings.save_general_settings') as save:
             backend._finish_desktop_fallback(dict(success=True,generation=7,action='restart'))
+            allowed.assert_called_once_with(policy)
             close.assert_called_once();restart.assert_called_once();save.assert_not_called()
         self.assertFalse(backend.remoteLoginEnabled)
         self.assertTrue(backend._desktop_fallback)
@@ -163,7 +168,9 @@ class UiAsyncTest(unittest.TestCase):
         backend=self.make_backend();backend._remote_login.enabled=True
         backend._desktop_fallback_pending=True;backend._desktop_fallback_generation=1
         backend.stopSession()
-        with patch.object(backend._remote_login,'close'), patch.object(backend,'startSession') as start:
+        with patch('monitorize.remote_login.settings.read_settings',return_value=SimpleNamespace(enabled=True)), \
+             patch('monitorize.platform.remote_login_identity.desktop_fallback_allowed',return_value=True), \
+             patch.object(backend._remote_login,'close'), patch.object(backend,'startSession') as start:
             backend._finish_desktop_fallback(dict(success=True,generation=1,action='start'))
             start.assert_not_called()
 

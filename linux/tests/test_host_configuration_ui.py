@@ -178,7 +178,11 @@ with tempfile.TemporaryDirectory() as d:
             # Ownership fallback performs the same capture reconciliation.
             backend._remote_login.enabled=True
             backend._desktop_fallback_generation=7
-            backend._finish_desktop_fallback({'success':True,'generation':7,'action':'restart'})
+            policy=SimpleNamespace(enabled=True)
+            with patch('monitorize.remote_login.settings.read_settings',return_value=policy), \
+                 patch('monitorize.platform.remote_login_identity.desktop_fallback_allowed',return_value=True) as allowed:
+                backend._finish_desktop_fallback({'success':True,'generation':7,'action':'restart'})
+                allowed.assert_called_once_with(policy)
             backend._restart.tick();backend._restart.tick()
             assert not backend.applyingConfiguration
             assert backend.session.configuration()['capture']=='auto'
