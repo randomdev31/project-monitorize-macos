@@ -1,13 +1,18 @@
 name: macOS Intel
 on:
   push:
+    branches: [main]
+    tags: ['macos-v*']
   pull_request:
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   intel:
     runs-on: macos-15-intel
+    timeout-minutes: 30
     env:
-      MACOSX_DEPLOYMENT_TARGET: "12.0"
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
@@ -15,12 +20,76 @@ jobs:
         with:
           python-version: '3.12'
           architecture: x64
-      - run: bash macos/build-native.sh
-      - run: python -m pip install . build
-      - run: python -m unittest discover -s macos/tests -v
+      - name: Compile native display helper
+        run: bash macos/build-native.sh
+      - name: Install application and packaging tools
+        run: python -m pip install . build 'pyinstaller>=6.11,<7'
+      - name: Run portable, Qt and native tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s macos/tests -v 2>&1 | tee macos-test.log
+      - name: Record test results in public job summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f macos-test.log ]]; then
+            echo '## macOS Intel automated tests' >> "$GITHUB_STEP_SUMMARY"
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            cat macos-test.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Build wheel containing Intel helper
         run: python -m build --wheel
+      - name: Bundle standalone Intel application
+        run: python -m PyInstaller --noconfirm macos/Monitorize.spec
+      - name: Verify application bundle and stage release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=2 dist/Monitorize.app
+          file dist/Monitorize.app/Contents/MacOS/Monitorize | grep x86_64
+          mkdir release-assets
+          ditto -c -k --sequesterRsrc --keepParent dist/Monitorize.app release-assets/Monitorize-macos-intel.zip
+          cp dist/*.whl release-assets/
+          cp macos/TESTING.es.md release-assets/
+          cp macos-test.log release-assets/
+          cd release-assets
+          shasum -a 256 Monitorize-macos-intel.zip *.whl TESTING.es.md macos-test.log > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: monitorize-macos-intel-wheel
-          path: dist/*.whl
+          name: monitorize-macos-intel
+          path: release-assets/*
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/macos-v')
+    needs: intel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: monitorize-macos-intel
+          path: release-assets
+      - name: Publish tested prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          Primera versión de prueba de Monitorize para macOS Intel (macOS 12+).
+
+          Descarga **Monitorize-macos-intel.zip**, descomprime y mueve Monitorize.app a Aplicaciones. Incluye Python y Qt; Sunshine se instala por separado. La app tiene firma ad hoc y no está notarizada por Apple.
+
+          Consulta **TESTING.es.md** para probar primero las pantallas virtuales y después Moonlight. Los hashes están en **SHA256SUMS.txt** y el resultado de las pruebas automáticas en **macos-test.log**.
+
+          La release se publica únicamente si pasan la compilación del helper x86_64, las pruebas automáticas y la verificación de firma del bundle. La prueba de creación de pantallas que requiere una sesión gráfica es optativa y se omite en CI. El streaming con Moonlight sigue pendiente de validación manual en un Mac real. CGVirtualDisplay es una API privada de Apple.
+          NOTES
+          gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
+            --title "Monitorize Intel macOS — $RELEASE_TAG" --notes-file release-notes.md
+          gh release upload "$RELEASE_TAG" release-assets/*
+          gh release edit "$RELEASE_TAG" --draft=false

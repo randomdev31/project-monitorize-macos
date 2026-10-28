@@ -31,6 +31,14 @@ helper and wheel and runs native enumeration tests; it has not been run from thi
 This is a source-based desktop port, not a signed/notarized `.app` or App Store build.
 No SIP changes, kernel extensions or root permissions are required by this implementation.
 
+## Download a test release
+
+The macOS Intel workflow builds a standalone `Monitorize.app` ZIP, a native wheel,
+checksums and a test report. Tags matching `macos-v*` publish a prerelease only
+after compilation, automated tests and bundle verification succeed.
+See [the Spanish testing guide](macos/TESTING.es.md) for installation and manual tests.
+The app includes Python and Qt; Sunshine remains a separate installation.
+
 ## Install and launch on an Intel Mac
 
 From this checkout (each cloud task is already isolated; no extra worktree is needed):
