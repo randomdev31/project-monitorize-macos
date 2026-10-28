@@ -50,7 +50,7 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Build wheel containing Intel helper
-        run: python -m build --wheel
+        run: python -m build --wheel --config-setting=--build-option=--plat-name=macosx_12_0_x86_64
       - name: Bundle standalone Intel application
         run: python -m PyInstaller --noconfirm macos/Monitorize.spec
       - name: Smoke-test packaged frontend and native helper
@@ -63,6 +63,17 @@ jobs:
           file dist/Monitorize.app/Contents/MacOS/Monitorize | grep x86_64
           mkdir release-assets
           ditto -c -k --sequesterRsrc --keepParent dist/Monitorize.app release-assets/Monitorize-macos-intel.zip
+          python - <<'PYTHON'
+          from pathlib import Path
+          import zipfile
+          wheels = list(Path('dist').glob('*.whl'))
+          if len(wheels) != 1 or not wheels[0].name.endswith('-macosx_12_0_x86_64.whl'):
+              raise SystemExit(f'Expected one Intel-only wheel, got {wheels}')
+          with zipfile.ZipFile(wheels[0]) as archive:
+              helper = archive.read('monitorize/macos/native/monitorize-display')
+              if helper[:4] != b'\xcf\xfa\xed\xfe' or int.from_bytes(helper[4:8], 'little') != 0x01000007:
+                  raise SystemExit('Wheel helper must be Mach-O x86_64')
+          PYTHON
           cp dist/*.whl release-assets/
           cp macos/TESTING.es.md release-assets/
           cp macos-test.log release-assets/
