@@ -15,5 +15,5 @@ pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='Monitorize',
           console=False, target_arch='x86_64', codesign_identity='-')
 collection = COLLECT(exe, a.binaries, a.datas, name='Monitorize')
-app = BUNDLE(collection, name='Monitorize.app', bundle_identifier='com.monitorize.macos.intel',
+app = BUNDLE(collection, name='Monitorize.app', codesign_identity='-', bundle_identifier='com.monitorize.macos.intel',
              info_plist={'LSMinimumSystemVersion': '12.0', 'NSHighResolutionCapable': True})

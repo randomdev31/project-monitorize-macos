@@ -53,6 +53,8 @@ jobs:
         run: python -m build --wheel
       - name: Bundle standalone Intel application
         run: python -m PyInstaller --noconfirm macos/Monitorize.spec
+      - name: Smoke-test packaged frontend and native helper
+        run: dist/Monitorize.app/Contents/MacOS/Monitorize --smoke-test
       - name: Verify application bundle and stage release assets
         shell: bash
         run: |
