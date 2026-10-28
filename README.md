@@ -1,82 +1,110 @@
-<div align="center">
-  <img src="linux/monitorize/assets/monitorize_desktop_logo.png" alt="Monitorize logo" width="160" />
-  <h1>Monitorize</h1>
-  <p><strong>A virtual display manager for Linux with built-in streaming.</strong></p>
-  <p>
-    <a href="https://github.com/vinnavannewton/project-monitorize/actions/workflows/desktop.yml"><img src="https://img.shields.io/github/actions/workflow/status/vinnavannewton/project-monitorize/desktop.yml?branch=main&label=Desktop%20CI" alt="Desktop CI" /></a>
-    <a href="https://github.com/vinnavannewton/project-monitorize/actions/workflows/desktop-release.yml"><img src="https://img.shields.io/github/actions/workflow/status/vinnavannewton/project-monitorize/desktop-release.yml?label=Desktop%20CD" alt="Desktop CD" /></a>
-    <a href="https://github.com/vinnavannewton/project-monitorize/releases/latest"><img src="https://img.shields.io/github/v/release/vinnavannewton/project-monitorize?sort=date&filter=monitorize-v*&display_name=tag&label=Latest%20release" alt="Latest release" /></a>
-    <a href="https://github.com/vinnavannewton/project-monitorize/releases"><img src="https://img.shields.io/github/downloads/vinnavannewton/project-monitorize/total?label=Downloads" alt="Total release asset downloads" /></a>
-  </p>
-</div>
+# Monitorize for Intel macOS
 
-https://github.com/user-attachments/assets/14a21a68-011b-43bf-9f26-fc9ea731d80b
+Port of [vinnavannewton/project-monitorize](https://github.com/vinnavannewton/project-monitorize)
+(upstream commit `547c44cbd5982172b3c20a24a21c6a6760aad707`, version 0.34).
+Original Linux sources, assets, authorship and GPL-3.0 license are retained.
+See [the original README](README.linux.md) for Linux functionality.
 
-![Monitorize configuration and session screens](assets/Demo.png)
+This port adds a separate macOS frontend and native CoreGraphics backend:
 
-Monitorize creates and manages virtual displays on Linux using compositor-native outputs or [monitorize-vkms](https://github.com/vinnavannewton/monitorize-vkms). Use virtual displays on their own, or stream them to another device through built-in Sunshine integration.
+- Create up to two virtual displays, with independent resolution and refresh rate.
+- Select an existing display for streaming without modifying its configuration.
+- Launch separate Sunshine profiles for Moonlight, with ports 47989 and 49089.
+- Keep credentials, apps and settings separate from an existing Sunshine installation.
+- Stop owned Sunshine processes before removing their displays. The helper also
+  releases its display when the frontend's stdin pipe closes after a crash.
 
-For streaming, connect with [Moonlight](https://moonlight-stream.org/) on Android, Linux, Windows, macOS, iOS, or another supported device.
+**Status:** implementation available; native compilation, virtual display creation,
+permissions and end-to-end streaming still require verification on an Intel Mac.
+Linux tests do not establish macOS compatibility. The macOS CI workflow builds the
+helper and wheel and runs native enumeration tests; it has not been run from this workspace.
 
-## Features
+## Requirements
 
-- Create and manage up to two virtual displays.
+- Intel Mac (`x86_64`), macOS Monterey 12 or newer, logged-in graphical session.
+- Xcode Command Line Tools (`xcode-select --install`).
+- Python 3.11+ for Intel, with `venv` and `pip`.
+- Sunshine for Intel macOS, optional if only using virtual displays.
+- Moonlight on the client for streaming.
 
-- Support compositor-native virtual displays and monitorize-vkms.
+`CGVirtualDisplay` is a **private** macOS API. Apple can change or remove it.
+This is a source-based desktop port, not a signed/notarized `.app` or App Store build.
+No SIP changes, kernel extensions or root permissions are required by this implementation.
 
-- Stream virtual displays or mirror an existing monitor through Sunshine.
+## Install and launch on an Intel Mac
 
-- Configure streaming encoders, codecs, audio, touch, and stylus options via the integrated sunshine.
+From this checkout (each cloud task is already isolated; no extra worktree is needed):
 
-- Keeps Monitorize's Sunshine instances separate from your existing Sunshine setup.
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+bash macos/build-native.sh
+python -m pip install .
+monitorize
+```
 
-## Supported desktops
+Rebuild the helper and reinstall after updating native code. To develop Python code
+without reinstalling, use `python -m pip install -e .` after building the helper.
+The entry point selects the macOS frontend **before** importing any Linux services.
+D-Bus and PyGObject are installed only on Linux.
 
-This table shows whether each desktop environment supports via compositor-native virtual displays, [monitorize-vkms](https://github.com/vinnavannewton/monitorize-vkms), or both.
-| Desktop Environment | Compositor | monitorize-vkms |
-| --- | :---: | :---: |
-| KDE Plasma 6.7+ | ✅ | ✅ |
-| GNOME 50+| ✅ | ✅ |
-| Hyprland | ✅ | ✅ |
-| Niri | ❌ | ✅ |
-| Cinnamon X11 | ❌ | ✅ |
+1. Choose a virtual display or an existing display in either slot, then **Start**.
+2. For a virtual display, arrange it using macOS System Settings → Displays.
+3. Optionally click **Start Sunshine**, then **Pair / Sunshine settings**.
+4. Set Sunshine's web credentials on first use and enter the Moonlight pairing PIN.
+5. Connect Moonlight to the Mac. For slot 2, add the host as `MAC_IP:49089`.
+6. Click **Stop** before closing. Closing the window stops both owned sessions.
 
-Native **Virtual displays only** uses guarded layout restoration on KDE/GNOME,
-Hyprland, Niri/VKMS, and Xorg/VKMS sessions. The shared X11 backend uses XRandR
-and Sunshine X11 capture; Cinnamon, XFCE, MATE, LXQt and other Xorg desktops use
-the same capability checks. The new Hyprland/X11/Niri paths have automated source
-coverage; live acceptance on each desktop/GPU remains pending. X11 requires
-`xrandr`; Hyprland VKMS requires an updated host helper and a reported running
-Aquamarine version of at least 0.15.1. These desktop options do not change the
-login-screen display policy.
+Sunshine must support macOS `output_name` as a **CoreGraphics display ID**, not a
+list index. The integration follows LizardByte/Sunshine's macOS backend at commit
+`7974a409bb82f2e52a45dad901acdd10fd1d61c1`. Older builds may interpret it differently;
+verify the selected display in Sunshine's log before streaming sensitive content.
+Install a compatible build separately; Sunshine is not bundled or silently installed.
+If it is not on PATH or in `/Applications/Sunshine.app`, set:
 
-## Installation
+```sh
+export MONITORIZE_SUNSHINE='/absolute/path/to/sunshine'
+monitorize
+```
 
-- [Fedora](https://github.com/vinnavannewton/project-monitorize/wiki/Fedora-installation)
-- [Arch Linux](https://github.com/vinnavannewton/project-monitorize/wiki/Arch-installation)
-- [Ubuntu](https://github.com/vinnavannewton/project-monitorize/wiki/Ubuntu-installation)
-- [openSUSE Tumbleweed](https://github.com/vinnavannewton/project-monitorize/wiki/openSUSE-Tumbleweed-installation)
-- [NixOS / Nix](https://github.com/vinnavannewton/project-monitorize/wiki/Nix-installation)
+Grant **Screen Recording** and **Accessibility** to the Sunshine executable/app in
+System Settings → Privacy & Security; restart the session after granting access.
+A process starting does not prove capture works: confirm the intended display from
+Moonlight. Sunshine's local HTTPS web UI uses its own self-signed certificate.
+The app opens it in the browser; it does not disable TLS verification.
 
-For login-screen startup, see [remote-login setup](packaging/remote-login/README.md#current-installation-workflow),
-including the extra system-assets step for source installs.
+Monitorize profiles and logs live in
+`~/Library/Application Support/Monitorize/sunshine-1` and `sunshine-2`.
+Web UIs use `https://localhost:47990` and `https://localhost:49090` on the Mac.
+Web administration is restricted to the local PC and UPnP is disabled. Allow only
+the required Sunshine streaming ports through the macOS firewall for your LAN.
+Stop conflicting Sunshine instances if ports are occupied; Monitorize never kills
+unrelated processes. Sunshine UI preferences and custom apps survive restarts.
 
-## Contributing
+## Validation
 
-Want to contribute? See the [Contributing guide](https://github.com/vinnavannewton/project-monitorize/wiki/Contributing).
+Portable configuration tests (Linux or macOS, no Qt required):
 
-## Usage
+```sh
+PYTHONPATH=linux python3 -m unittest discover -s macos/tests -v
+```
 
-For DE's with no compositor-native virtual display support, use via VKMS by installing [monitorize-vkms](https://github.com/vinnavannewton/monitorize-vkms).
+On Intel macOS, build/install first to exercise native enumeration and argument
+validation. To also test virtual creation and owner-exit cleanup in a real desktop:
 
-Tip: If the stream is black or crashes, try changing the stream from auto to other options in monitorize based on what your hardware supports.
+```sh
+MONITORIZE_TEST_VIRTUAL=1 python -m unittest discover -s macos/tests -v
+```
 
-## Star History
+Before relying on this port, verify on the target Mac:
 
-<a href="https://www.star-history.com/?repos=vinnavannewton%2FProjectMonitorize&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=vinnavannewton/ProjectMonitorize&type=date&theme=dark&legend=top-left&sealed_token=UrJIpYgjHe4fJj10B7GKSJo0AdhR5bGEFiNv9cpP4iJQEhNXknPXAq5aX7g6bk2y7UAMoa3xfVqKyRWSANVZobe2uVlMjvYXbCaeOmO5w6tdzEvCjnFejmzXxjtW2mIf4Yny6uOhs2jXSxC01ZMh5Q_Dd6dRD2NniWjkaltRE1SzVWfwyOP0rZwE5oCI" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=vinnavannewton/ProjectMonitorize&type=date&legend=top-left&sealed_token=UrJIpYgjHe4fJj10B7GKSJo0AdhR5bGEFiNv9cpP4iJQEhNXknPXAq5aX7g6bk2y7UAMoa3xfVqKyRWSANVZobe2uVlMjvYXbCaeOmO5w6tdzEvCjnFejmzXxjtW2mIf4Yny6uOhs2jXSxC01ZMh5Q_Dd6dRD2NniWjkaltRE1SzVWfwyOP0rZwE5oCI" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=vinnavannewton/ProjectMonitorize&type=date&legend=top-left&sealed_token=UrJIpYgjHe4fJj10B7GKSJo0AdhR5bGEFiNv9cpP4iJQEhNXknPXAq5aX7g6bk2y7UAMoa3xfVqKyRWSANVZobe2uVlMjvYXbCaeOmO5w6tdzEvCjnFejmzXxjtW2mIf4Yny6uOhs2jXSxC01ZMh5Q_Dd6dRD2NniWjkaltRE1SzVWfwyOP0rZwE5oCI" />
- </picture>
-</a>
+- Start two virtual displays, check resolution/arrangement, stop each independently.
+- Start Sunshine for each slot; pair Moonlight and verify the correct capture target.
+- Verify keyboard/mouse permissions, VideoToolbox encoding and reconnect behavior.
+- Close the frontend and confirm the owned displays and Sunshine processes disappear.
+- Restart and confirm credentials and per-slot settings are retained.
+
+Linux VKMS/compositor drivers, remote login/greeter streaming, systemd startup,
+Linux audio routing, touch/stylus integration and the original QML frontend are not
+ported. Audio support depends on the separately installed Sunshine and its macOS
+audio setup. Virtual displays do not survive quitting Monitorize or logging out.

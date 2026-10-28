@@ -11,10 +11,11 @@ requires-python = ">=3.11"
 license = { text = "GPL-3.0-only" }
 authors = [{ name = "Monitorize contributors" }]
 dependencies = [
-    "PyQt6",
+    "PyQt6; sys_platform != 'darwin'",
+    "PyQt6>=6.6,<6.8; sys_platform == 'darwin'",
     "Jinja2",
-    "dbus-python",
-    "PyGObject",
+    "dbus-python; sys_platform == 'linux'",
+    "PyGObject; sys_platform == 'linux'",
 ]
 
 [project.scripts]
@@ -26,6 +27,8 @@ include = ["monitorize*"]
 
 [tool.setuptools.package-data]
 monitorize = [
+    "macos/native/monitorize-display",
+    "macos/native/*.m",
     "assets/*",
     "assets/svg/*",
     "assets/tray/*",

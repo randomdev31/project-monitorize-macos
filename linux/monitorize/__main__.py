@@ -2,7 +2,6 @@
 
 import sys
 
-from monitorize.config.settings import load_general_settings
 
 
 def _remote_controller_required():
@@ -18,6 +17,7 @@ def _remote_controller_required():
 
 
 def _use_light_tray(argv):
+    from monitorize.config.settings import load_general_settings
     if _remote_controller_required():
         return False
     tray_requested = '--tray-agent' in argv or '--start-in-tray' in argv
@@ -29,6 +29,9 @@ def _use_light_tray(argv):
 
 
 def main():
+    if sys.platform == "darwin":
+        from monitorize.macos.app import main as mac_main
+        return mac_main()
     light_tray = _use_light_tray(sys.argv)
     if light_tray:
         from monitorize.desktop.tray_agent import main as app_main
@@ -40,4 +43,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -128,3 +128,6 @@ docs/
 # ==============================
 result
 result-*
+
+# Locally built macOS helper
+/linux/monitorize/macos/native/monitorize-display
